@@ -12,7 +12,7 @@ use chrono::{DateTime, FixedOffset, format::ParseError};
 
 use crate::models::{Point, PointGeometry, PointProperties,
     NWR, Alerts, Alert, AlertGeometry,
-    AlertData, Geocode, AlertsSorted, AlertCategory,
+    AlertData, Geocode, AlertsSorted,
     Forecast, Properties, Elevation, IntVec, TimeInt,
     FloatVec, TimeFloat, ForecastResponse, NWSError};
 
@@ -54,11 +54,7 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
             Err(_e) => return Err(NWSError::JsonError(_e)),
         };
 
-    let mut alerts_sorted = AlertsSorted
-    {
-        alert_categories: vec![],
-        category_names: vec![],
-    };
+    let mut alerts_sorted = AlertsSorted::default();
 
     for alert in alerts.features.iter_mut()                                                
     {                                                                                      
@@ -71,26 +67,26 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
                     Ok(new_geo) => 
                     {
                         alert.geometry = Some(AlertGeometry::Polygon(new_geo));                  
-                        alerts_sorted.add_alert("with_geometry".to_string(), alert);
+                        alerts_sorted.add_geometry_alert(alert);
                     }
                     Err(_e) => 
                     {
                         for same_code in alert.properties.geocode.same.iter()
                         {
-                            alerts_sorted.add_alert(same_code.to_string(), alert);
+                            alerts_sorted.add_same_code_alert(same_code.to_string(), alert);
                         }
                     }
                 }                                                                          
             }                                                                              
             Some(AlertGeometry::Polygon(geo)) =>
             {
-                alerts_sorted.add_alert("with_geometry".to_string(), alert);
+                alerts_sorted.add_geometry_alert(alert);
             }
             None =>
             {
                 for same_code in alert.properties.geocode.same.iter()
                 {
-                    alerts_sorted.add_alert(same_code.to_string(), alert);
+                    alerts_sorted.add_same_code_alert(same_code.to_string(), alert);
                 }
             }
         }                                                                           
@@ -101,37 +97,26 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
 
 pub async fn check_alerts(alerts: AlertsSorted, point: Point) -> Vec<Alert>
 {
-    let mut checked: Vec<Alert> = vec![];
-    // add proper error handling
-    for category in alerts.alert_categories.iter()
+    // alerts without geometry: direct hash lookup by the point's SAME code
+    let mut checked: Vec<Alert> =
+        alerts.get_same_code_alerts(&point.properties.nwr.same_code).to_vec();
+    if !checked.is_empty()
     {
-        if category.id == "with_geometry".to_string()
+        println!("alert matched from samecode");
+    }
+
+    // alerts with geometry: check whether the polygon contains the point
+    if let Some(coordinates) = point.geometry.coordinates
+    {
+        for alert in alerts.with_geometry.iter()
         {
-            println!("checking geometry");
-            for alert in category.alerts.iter()
+            if let Some(AlertGeometry::Polygon(value)) = &alert.geometry
             {
-                if let Some(AlertGeometry::Polygon(value)) = &alert.geometry
+                if value.contains(&coordinates)
                 {
-                    if value.contains(&point.geometry.coordinates.unwrap())
-                    {
-                        println!("alert matched via geometry!");
-                        checked.push(alert.clone());
-                    }
-                }
-            }
-        }
-        else
-        {
-            println!("checking samecode");
-            if category.id == point.properties.nwr.same_code
-            {
-                println!("alert matched from samecode");
-                //println!("{:?}", category.alerts[0]);
-                for alert in category.alerts.iter()
-                {
+                    println!("alert matched via geometry!");
                     checked.push(alert.clone());
                 }
-                break
             }
         }
     }

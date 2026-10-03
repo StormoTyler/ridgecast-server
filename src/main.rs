@@ -24,20 +24,15 @@ use thiserror::Error;
 
 // local modules
 mod handlers;
-use crate::handlers::nws;
+use crate::handlers::{nws, nac};
+mod database;
+use crate::database::DB;
 mod models;
 use crate::models::{UserPoint, Point, PointGeometry, PointProperties,
     NWR, Alerts, Alert, AlertGeometry, AlertData,
-    Geocode, AlertsSorted, AlertCategory, Forecast, Properties,
+    Geocode, AlertsSorted, Forecast, Properties,
     Elevation, IntVec, TimeInt, FloatVec, TimeFloat, ForecastResponse,
     NWSError};
-
-#[derive(Debug, Clone)]
-pub struct AppState 
-{
-    mongo: Arc<Client>,
-    collections: Collection,
-}
 
 #[derive(Error, Debug, Serialize, Deserialize)]
 pub enum APIError
@@ -71,37 +66,26 @@ impl IntoResponse for APIError
 #[tokio::main]                                                                
 async fn main() -> Result<(), Box<dyn std::error::Error>>                     
 {                                                                             
-    let db_connection_str = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            "mongodb://127.0.0.1:27017".to_string()                           
-        });                                                                   
-    let client = Client::with_uri_str(db_connection_str).await.unwrap();      
-                                                                              
-    // pinging the database                                                   
-    client                                                                    
-        .database("trail-alert")                                              
-        .run_command(doc! { "ping": 1 })                                      
-        .await                                                                
-        .unwrap();                                                            
-    println!("Pinged your database. Successfully connected to MongoDB!");     
+    let db = DB::init().await?;
                                                                               
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 5001));            
     println!("Listening on: {}", addr);                                       
     let listener = tokio::net::TcpListener::bind(addr).await?;                
-    axum::serve(listener, app(client)).await?;                                
+    axum::serve(listener, app(db)).await?;                                
     Ok(())                                                                    
 }                                                                             
 
-fn app(client: Client, state: AppState) -> Router
+fn app(db: DB) -> Router
 {
     Router::new()
         .route("/", get(homepage))
         .route("/forecast", get(new_forecast))
         .route("/forecast/scheduled", post(schedule_forecast))
         .route("/alerts", get(get_alerts))
-        .route("/check-alerts", get(check_alerts))
+        .route("/check-alerts", post(check_alerts))
         .route("/get-avy", get(get_avy))
         .route("/check-avy", get(check_avy))
-        .with_state(state)
+        .with_state(db)
 }
 
 async fn homepage()
@@ -109,16 +93,17 @@ async fn homepage()
 
 }
 
-async fn new_forecast(State(db): State<Collection<AlertsSorted>>) -> Response
+async fn new_forecast(State(db): State<DB>) -> Response
 {
-    let alerts = match db.find_one(doc! {}).await
-    {                                            
-        Ok(alerts) => alerts,                    
-        Err(_e) => None,                         
-    };                                           
-    
-    let forecast = match 
-    nws::get_forecast(44.0, -123.0, alerts.unwrap()).await
+    let alerts = match db.alerts_collection.find_one(doc! {}).await
+    {
+        Ok(Some(alerts)) => alerts,
+        Ok(None) => return APIError::AlertsError.into_response(),
+        Err(_e) => return APIError::DatabaseError.into_response(),
+    };
+
+    let forecast = match
+    nws::get_forecast(44.0, -123.0, alerts).await
     {
         Ok(result) => result,
         Err(_e) => return APIError::ForecastError.into_response(),
@@ -130,13 +115,13 @@ async fn new_forecast(State(db): State<Collection<AlertsSorted>>) -> Response
         user: "whatever".to_string(),
         point: forecast.point.clone(),
     };
-
+    add_alert_tracker(user_point, &db).await;
     Json(forecast).into_response()
 }
 
-async fn add_alert_tracker()
+async fn add_alert_tracker(user_point: UserPoint, db: &DB)
 {
-
+    db.points_collection.insert_one(&user_point).await;
 }
 
 async fn schedule_forecast()
@@ -144,7 +129,7 @@ async fn schedule_forecast()
 
 }
 
-async fn get_alerts(State(db): State<Collection<AlertsSorted>>) -> Response
+async fn get_alerts(State(db): State<DB>) -> Response
 {
     let alerts = match
         nws::get_alerts().await
@@ -153,29 +138,26 @@ async fn get_alerts(State(db): State<Collection<AlertsSorted>>) -> Response
             Err(_e) => return APIError::AlertsError.into_response(),
         };
 
-    db.delete_many(doc! {}).await;
+    db.alerts_collection.delete_many(doc! {}).await;
 
-    db.insert_one(&alerts).await;
+    db.alerts_collection.insert_one(&alerts).await;
     Json(alerts).into_response()
     //let random_string = String::from("Sucessfully inserted alerts into database");
     //random_string.into_response()
 }
 
-async fn check_alerts(State(db): State<Collection<AlertsSorted>>)
+async fn check_alerts(State(db): State<DB>, Json(user_point): Json<UserPoint>)
+    -> Response
 {
-    let alerts = match db.find_one(doc! {}).await
+    let alerts = match db.alerts_collection.find_one(doc! {}).await
     {
-        Ok(alerts) => alerts,
-        Err(_e) => None,
+        Ok(Some(alerts)) => alerts,
+        Ok(None) => return APIError::AlertsError.into_response(),
+        Err(_e) => return APIError::DatabaseError.into_response(),
     };
 
-    if alerts.is_some()
-    {
-        //api::nws::check_alerts(alerts.unwrap()).await;
-        println!("checked alerts");
-    }
-    //println!("{:?}", alerts);
-    println!("didnt check alerts");
+    let active_alerts = nws::check_alerts(alerts, user_point.point).await;
+    Json(active_alerts).into_response()
 }
 
 async fn get_avy()

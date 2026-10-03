@@ -5,9 +5,10 @@ use geo_types;
 use chrono::{DateTime, FixedOffset, format::ParseError};
 use serde::{Serialize, Deserialize};
 use serde_json::json;
+use std::collections::HashMap;
 
 // user data models
-#[derive(Debug)]           
+#[derive(Debug, Serialize, Deserialize, Clone)]           
 pub struct UserPoint       
 {                          
    pub user: String,          
@@ -116,46 +117,39 @@ pub struct Geocode
     pub same: Vec<String>,                                       
 }                                                            
                                                              
-// data structures for utilizing nws alerts data             
-#[derive(Debug, Serialize, Deserialize)]                     
-pub struct AlertsSorted                                      
-{                                                            
-   pub alert_categories: Vec<AlertCategory>,                    
-   pub category_names: Vec<String>,                             
-}                                                            
-                                                             
-#[derive(Debug, Serialize, Deserialize)]                     
-pub struct AlertCategory                                     
-{                                                            
-   pub id: String,                                              
-   pub alerts: Vec<Alert>,                                      
-}                                                            
-                                                             
-impl AlertsSorted                                            
-{                                                            
-    pub fn add_alert(&mut self, id: String, alert: &Alert)       
-    {                                                        
-        if !self.category_names.contains(&id)                
-        {                                                    
-            self.alert_categories.push(AlertCategory         
-            {                                                
-                id: id.clone(),                              
-                alerts: vec![alert.clone()],                 
-            });                                              
-            self.category_names.push(id.clone());            
-        }                                                    
-        else                                                 
-        {                                                    
-            for category in self.alert_categories.iter_mut() 
-            {                                                
-                if category.id == id                         
-                {                                            
-                    category.alerts.push(alert.clone());     
-                }                                            
-            }                                                
-        }                                                    
-    }                                                        
-}                                                            
+// data structures for utilizing nws alerts data
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct AlertsSorted
+{
+   // alerts with a polygon, checked against a point's coordinates
+   pub with_geometry: Vec<Alert>,
+   // alerts without a polygon, keyed by SAME code for O(1) lookup
+   pub by_same_code: HashMap<String, Vec<Alert>>,
+}
+
+impl AlertsSorted
+{
+    pub fn add_geometry_alert(&mut self, alert: &Alert)
+    {
+        self.with_geometry.push(alert.clone());
+    }
+
+    pub fn add_same_code_alert(&mut self, same_code: String, alert: &Alert)
+    {
+        self.by_same_code
+            .entry(same_code)
+            .or_default()
+            .push(alert.clone());
+    }
+
+    pub fn get_same_code_alerts(&self, same_code: &str) -> &[Alert]
+    {
+        self.by_same_code
+            .get(same_code)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+}
                                                              
 // data structures for nws gridpoints endpoint               
 #[derive(Debug, Serialize, Deserialize)]                     
