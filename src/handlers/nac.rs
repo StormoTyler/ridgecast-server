@@ -63,7 +63,7 @@ pub async fn get_avy() -> Result<AvalancheData, NACError>
             }
         };
 
-    println!("{:?}", avy);
+    //println!("{:?}", avy);
 
     for area in avy.features.iter_mut()
     {
