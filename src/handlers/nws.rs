@@ -11,7 +11,7 @@ use once_cell::sync::Lazy;
 use chrono::{DateTime, FixedOffset, format::ParseError};
 
 use crate::models::{Point, PointGeometry, PointProperties,
-    NWR, Alerts, Alert, AlertGeometry,
+    NWR, Alerts, Alert, GeometryTypes,
     AlertData, Geocode, AlertsSorted,
     Forecast, Properties, Elevation, IntVec, TimeInt,
     FloatVec, TimeFloat, ForecastResponse, NWSError};
@@ -60,13 +60,13 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
     {                                                                                      
         match &alert.geometry                                             
         {                                                                                  
-            Some(AlertGeometry::Geojson(geo)) =>                                           
+            Some(GeometryTypes::Geojson(geo)) =>                                           
             {                                                                              
                 match geo.clone().try_into()                                               
                 {                                                                          
                     Ok(new_geo) => 
                     {
-                        alert.geometry = Some(AlertGeometry::Polygon(new_geo));                  
+                        alert.geometry = Some(GeometryTypes::Polygon(new_geo));                  
                         alerts_sorted.add_geometry_alert(alert);
                     }
                     Err(_e) => 
@@ -78,7 +78,11 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
                     }
                 }                                                                          
             }                                                                              
-            Some(AlertGeometry::Polygon(geo)) =>
+            Some(GeometryTypes::Polygon(geo)) =>
+            {
+                alerts_sorted.add_geometry_alert(alert);
+            }
+            Some(GeometryTypes::MultiPolygon(geo)) =>
             {
                 alerts_sorted.add_geometry_alert(alert);
             }
@@ -110,7 +114,7 @@ pub async fn check_alerts(alerts: AlertsSorted, point: Point) -> Vec<Alert>
     {
         for alert in alerts.with_geometry.iter()
         {
-            if let Some(AlertGeometry::Polygon(value)) = &alert.geometry
+            if let Some(GeometryTypes::Polygon(value)) = &alert.geometry
             {
                 if value.contains(&coordinates)
                 {

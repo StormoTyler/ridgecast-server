@@ -29,16 +29,18 @@ mod database;
 use crate::database::DB;
 mod models;
 use crate::models::{UserPoint, Point, PointGeometry, PointProperties,
-    NWR, Alerts, Alert, AlertGeometry, AlertData,
+    NWR, Alerts, Alert, GeometryTypes, AlertData,
     Geocode, AlertsSorted, Forecast, Properties,
     Elevation, IntVec, TimeInt, FloatVec, TimeFloat, ForecastResponse,
-    NWSError};
+    NWSError, AvalancheData, AvyArea, AvyProperties, AvyWarning};
 
 #[derive(Error, Debug, Serialize, Deserialize)]
 pub enum APIError
 {
     #[error("received error from NWS endpoint")]
     NWSError,
+    #[error("received error from NAC endpoint")]
+    NACError,
     #[error("error: not a Forecast")]
     ForecastError,
     #[error("error: could not retrieve alerts")]
@@ -54,6 +56,7 @@ impl IntoResponse for APIError
         let body = match self
         {
             APIError::NWSError => "recieved error from NWS endpoint",
+            APIError::NACError => "received error from NAC endpoint",
             APIError::ForecastError => "error, not a forecast",
             APIError::AlertsError => "error, coud not retrieve alerts",
             APIError::DatabaseError => "error retreiving from database",
@@ -114,6 +117,7 @@ async fn new_forecast(State(db): State<DB>) -> Response
     {
         user: "whatever".to_string(),
         point: forecast.point.clone(),
+        avy: None,
     };
     add_alert_tracker(user_point, &db).await;
     Json(forecast).into_response()
@@ -160,9 +164,19 @@ async fn check_alerts(State(db): State<DB>, Json(user_point): Json<UserPoint>)
     Json(active_alerts).into_response()
 }
 
-async fn get_avy()
+async fn get_avy(State(db): State<DB>) -> Response
 {
+    let avy = match
+        nac::get_avy().await
+        {
+            Ok(result) => result,
+            Err(_e) => return APIError::NACError.into_response(),
+        };
 
+    db.avy_collection.delete_many(doc! {}).await;
+
+    db.avy_collection.insert_one(&avy).await;
+    Json(avy).into_response()
 }
 
 async fn store_avy()

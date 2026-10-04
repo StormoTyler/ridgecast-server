@@ -13,6 +13,7 @@ pub struct UserPoint
 {                          
    pub user: String,          
    pub point: Point,
+   pub avy: Option<AvyProperties>,
 }                          
                            
 #[derive(Debug)]           
@@ -25,6 +26,7 @@ pub struct User
 // end user data models
 
 // data structures for nws points endpoint                   
+
 #[derive(Debug, Serialize, Deserialize, Clone)]              
 pub struct Point                                             
 {                                                            
@@ -81,17 +83,8 @@ pub struct Alerts
 #[derive(Debug, Serialize, Deserialize, Clone)]              
 pub struct Alert                                             
 {                                                            
-   pub geometry: Option<AlertGeometry>,                         
+   pub geometry: Option<GeometryTypes>,                         
    pub properties: AlertData,                                   
-}                                                            
-                                                             
-// enum for handling alert geometry                          
-#[derive(Debug, Serialize, Deserialize, Clone)]              
-#[serde(untagged)]                                           
-pub enum AlertGeometry                                       
-{                                                            
-   Geojson(geojson::Geometry),                              
-   Polygon(geo_types::Polygon),                             
 }                                                            
                                                              
 #[derive(Debug, Serialize, Deserialize, Clone)]              
@@ -121,9 +114,9 @@ pub struct Geocode
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct AlertsSorted
 {
-   // alerts with a polygon, checked against a point's coordinates
+   // alerts with geometry
    pub with_geometry: Vec<Alert>,
-   // alerts without a polygon, keyed by SAME code for O(1) lookup
+   // alerts without geometry
    pub by_same_code: HashMap<String, Vec<Alert>>,
 }
 
@@ -249,3 +242,89 @@ pub enum NWSError
                                                              
 }                                                            
 // end nws data models
+
+// data structures for NAC data
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AvalancheData
+{
+    pub features: Vec<AvyArea>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AvyArea
+{
+    pub id: i32, // currently uncertain whether this can be used for quick rechecking
+    pub properties: AvyProperties,
+    // if there is no geometry, the data is compromised
+    // therefore an option is not used
+    pub geometry: GeometryTypes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvyProperties
+{
+    pub name: Option<String>,
+    pub center: Option<String>,
+    pub center_link: Option<String>,
+    pub off_season: Option<bool>,
+    pub travel_advice: Option<String>,
+    pub danger: Option<String>,
+    pub danger_level: Option<i32>,
+    pub link: Option<String>,
+    pub timezone: Option<String>,
+    pub start_date: Option<DateTimeTypes>,
+    pub end_date: Option<DateTimeTypes>,
+    //pub warning: Option<AvyWarningTypes>,
+}
+
+
+
+
+
+
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvyWarning
+{
+    pub product: Option<String>,
+    pub start_date: Option<chrono::DateTime<FixedOffset>>,
+    pub end_date: Option<chrono::DateTime<FixedOffset>>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AvyWarningNull
+{
+    pub product: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum AvyWarningTypes
+{
+    AvyWarning(AvyWarning),
+    AvyWarningNull(AvyWarningNull),
+}
+
+// shared data structures for dealing with gemetric areas
+// enum for handling geometry deserialization
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]                             
+pub enum GeometryTypes         
+{                                              
+    Geojson(geojson::Geometry),                 
+    Polygon(geo_types::Polygon),
+    MultiPolygon(geo_types::MultiPolygon),
+}                                              
+
+// shared data structures for dealing with datetime
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DateTimeTypes
+{
+    // aware is listed first so stored values with an offset
+    // don't get matched as naive when deserialized from mongo
+    Aware(chrono::DateTime<FixedOffset>),
+    Naive(chrono::NaiveDateTime),
+}
