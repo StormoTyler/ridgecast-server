@@ -1,0 +1,1 @@
+mod nws_tests;
