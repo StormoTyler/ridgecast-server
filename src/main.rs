@@ -50,6 +50,8 @@ pub enum APIError
     AlertsError,
     #[error("no alerts stored yet, fetch them with GET /alerts first")]
     NoAlertsStored,
+    #[error("no avalanche data stored yet, fetch it with GET /get-avy first")]
+    NoAvyStored,
     #[error("upstream API timed out")]
     UpstreamTimeout,
     #[error("database error")]
@@ -72,7 +74,8 @@ impl IntoResponse for APIError
             | APIError::ForecastError
             | APIError::AlertsError => StatusCode::BAD_GATEWAY,
             APIError::UpstreamTimeout => StatusCode::GATEWAY_TIMEOUT,
-            APIError::NoAlertsStored => StatusCode::SERVICE_UNAVAILABLE,
+            APIError::NoAlertsStored
+            | APIError::NoAvyStored => StatusCode::SERVICE_UNAVAILABLE,
             APIError::DatabaseError => StatusCode::INTERNAL_SERVER_ERROR,
             APIError::InvalidLocation => StatusCode::BAD_REQUEST,
             APIError::LocationNotCovered => StatusCode::NOT_FOUND,

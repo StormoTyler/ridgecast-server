@@ -10,7 +10,7 @@ fn flags_in_bit_order(vars: &ForecastVars) -> [bool; 12]
     [
         vars.track_alerts,
         vars.no_forecast,
-        vars.avy,
+        vars.track_avy,
         p.elevation,
         p.wet_bulb_globe_temperature,
         p.heat_risk,

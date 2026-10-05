@@ -26,7 +26,8 @@ pub struct ForecastVars
 {
     pub track_alerts: bool,
     pub no_forecast: bool,
-    pub avy: bool,
+    // create an avalanche danger tracker for this location
+    pub track_avy: bool,
     pub forecast_properties: ForecastProperties,
 }
 

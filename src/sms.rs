@@ -4,8 +4,17 @@
 use std::str::FromStr;
 use thiserror::Error;
 
+use geo::Intersects;
+use mongodb::bson::doc;
+use serde::Serialize;
+
 // local modules
-use crate::models::{ForecastVars, ForecastProperties};
+use crate::{APIError, add_alert_tracker};
+use crate::database::DB;
+use crate::handlers::nws;
+use crate::models::{Alert, AvyProperties, Elevation, FloatVec, ForecastProperties,
+    ForecastResponse, ForecastVars, GeometryTypes, IntVec, NWSError, Point, Properties,
+    UserPoint};
 
 const SUPPORTED_VERSION: &str = "1";
 
@@ -141,7 +150,7 @@ fn parse_flags(value: &str) -> Option<ForecastVars>
     {
         track_alerts: bit(0),
         no_forecast: bit(1),
-        avy: bit(2),
+        track_avy: bit(2),
         forecast_properties: ForecastProperties
         {
             elevation: bit(3),
@@ -155,4 +164,196 @@ fn parse_flags(value: &str) -> Option<ForecastVars>
             wind_gust: bit(11),
         },
     })
+}
+
+// forecast reply for an SMS request: the base forecast fields are always
+// included, the optional ones only when their flag is set
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestedForecast
+{
+    pub temperature: FloatVec,
+    pub max_temperature: FloatVec,
+    pub min_temperature: FloatVec,
+    pub apparent_temperature: FloatVec,
+    pub quantitative_precipitation: FloatVec,
+    pub probability_of_precipitation: IntVec,
+    pub snowfall_amount: FloatVec,
+    pub ice_accumulation: FloatVec,
+    pub wind_direction: IntVec,
+    pub wind_speed: FloatVec,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elevation: Option<Elevation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wet_bulb_globe_temperature: Option<FloatVec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heat_risk: Option<IntVec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relative_humidity: Option<IntVec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<FloatVec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ceiling_height: Option<FloatVec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pressure: Option<FloatVec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snow_level: Option<FloatVec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wind_gust: Option<FloatVec>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SmsForecastResponse
+{
+    pub point: Point,
+    // None when the request set the no_forecast flag
+    pub forecast: Option<RequestedForecast>,
+    pub alerts: Vec<Alert>,
+}
+
+impl RequestedForecast
+{
+    fn from_properties(properties: Properties, flags: &ForecastProperties) -> Self
+    {
+        // keeps an optional field only when its flag is set
+        fn keep<T>(flag: bool, value: T) -> Option<T>
+        {
+            flag.then_some(value)
+        }
+
+        RequestedForecast
+        {
+            temperature: properties.temperature,
+            max_temperature: properties.max_temperature,
+            min_temperature: properties.min_temperature,
+            apparent_temperature: properties.apparent_temperature,
+            quantitative_precipitation: properties.quantitative_precipitation,
+            probability_of_precipitation: properties.probability_of_precipitation,
+            snowfall_amount: properties.snowfall_amount,
+            ice_accumulation: properties.ice_accumulation,
+            wind_direction: properties.wind_direction,
+            wind_speed: properties.wind_speed,
+            elevation: keep(flags.elevation, properties.elevation),
+            // these are already optional because NWS leaves them out for some areas
+            wet_bulb_globe_temperature: properties.wet_bulb_globe_temperature
+                .filter(|_| flags.wet_bulb_globe_temperature),
+            heat_risk: properties.heat_risk.filter(|_| flags.heat_risk),
+            relative_humidity: keep(flags.relative_humidity, properties.relative_humidity),
+            visibility: keep(flags.visibility, properties.visibility),
+            ceiling_height: properties.ceiling_height.filter(|_| flags.ceiling_height),
+            pressure: keep(flags.pressure, properties.pressure),
+            snow_level: keep(flags.snow_level, properties.snow_level),
+            wind_gust: keep(flags.wind_gust, properties.wind_gust),
+        }
+    }
+}
+
+// takes an SmsRequest and returns data for the fields flagged as True
+// adds an alerts tracker or avalanche tracker if those fields are True
+// user is the sender's phone number, which identifies the user
+// will check phone number against list of approved users - not yet unimplemented!()
+pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
+    -> Result<SmsForecastResponse, APIError>
+{
+    let SmsRequest { lat, lon, forecast_vars } = request;
+    let (lat, lon) = (*lat, *lon);
+
+    let alerts = match db.alerts_collection.find_one(doc! {}).await
+    {
+        Ok(Some(alerts)) => alerts,
+        Ok(None) => return Err(APIError::NoAlertsStored),
+        Err(e) =>
+        {
+            eprintln!("get_requested_forecast: failed to read alerts from database: {e}");
+            return Err(APIError::DatabaseError);
+        }
+    };
+
+    let response = if forecast_vars.no_forecast
+    {
+        // the point is still needed to check alerts and create trackers
+        let point = nws::get_point(lat, lon).await
+            .map_err(|e| nws_error("get_point", lat, lon, e, APIError::NWSError))?;
+        let active_alerts = nws::check_alerts(&alerts, &point);
+        SmsForecastResponse { point, forecast: None, alerts: active_alerts }
+    }
+    else
+    {
+        let ForecastResponse { point, forecast, alerts: active_alerts } =
+            nws::get_forecast(lat, lon, &alerts).await
+            .map_err(|e| nws_error("get_forecast", lat, lon, e, APIError::ForecastError))?;
+        let forecast = RequestedForecast::from_properties(
+            forecast.properties, &forecast_vars.forecast_properties);
+        SmsForecastResponse { point, forecast: Some(forecast), alerts: active_alerts }
+    };
+
+    if forecast_vars.track_alerts || forecast_vars.track_avy
+    {
+        let avy = if forecast_vars.track_avy
+        {
+            find_avy_zone(&response.point, db).await?
+        }
+        else
+        {
+            None
+        };
+
+        // one tracker covers both options, its forecast_vars record which are on
+        let user_point = UserPoint
+        {
+            user: user.to_string(),
+            forecast_vars: forecast_vars.clone(),
+            point: response.point.clone(),
+            avy,
+            time_added: chrono::Utc::now(),
+        };
+        if let Err(e) = add_alert_tracker(user_point, db).await
+        {
+            eprintln!("get_requested_forecast: failed to save tracker: {e}");
+            return Err(APIError::DatabaseError);
+        }
+    }
+
+    Ok(response)
+}
+
+// maps an NWS error the same way the route handlers do
+fn nws_error(call: &str, lat: f32, lon: f32, e: NWSError, fallback: APIError) -> APIError
+{
+    if e.is_not_found()
+    {
+        return APIError::LocationNotCovered;
+    }
+    eprintln!("get_requested_forecast: {call} failed for {lat},{lon}: {e}");
+    if e.is_timeout() { APIError::UpstreamTimeout } else { fallback }
+}
+
+// returns the stored avalanche forecast zone containing the point, if any
+async fn find_avy_zone(point: &Point, db: &DB) -> Result<Option<AvyProperties>, APIError>
+{
+    let Some(coordinates) = point.geometry.coordinates
+    else
+    {
+        return Ok(None);
+    };
+
+    let avy = match db.avy_collection.find_one(doc! {}).await
+    {
+        Ok(Some(avy)) => avy,
+        Ok(None) => return Err(APIError::NoAvyStored),
+        Err(e) =>
+        {
+            eprintln!("get_requested_forecast: failed to read avalanche data from database: {e}");
+            return Err(APIError::DatabaseError);
+        }
+    };
+
+    // intersects, so a point on a zone boundary still matches
+    let zone = avy.features.into_iter().find(|area| match &area.geometry
+    {
+        GeometryTypes::Polygon(value) => value.intersects(&coordinates),
+        GeometryTypes::MultiPolygon(value) => value.intersects(&coordinates),
+        GeometryTypes::Geojson(_) => false,
+    });
+    Ok(zone.map(|area| area.properties))
 }

@@ -58,7 +58,7 @@ Each bit corresponds to a field of the `ForecastVars` struct in
 |---|---|---|---|
 | 0 | `001` | `track_alerts` | Track this location and send new NWS alerts for it |
 | 1 | `002` | `no_forecast` | Do not include a weather forecast in the reply |
-| 2 | `004` | `avy` | Include the avalanche forecast for this location |
+| 2 | `004` | `track_avy` | Create an avalanche danger tracker for this location |
 | 3 | `008` | `forecast_properties.elevation` | Include elevation |
 | 4 | `010` | `forecast_properties.wet_bulb_globe_temperature` | Include wet bulb globe temperature |
 | 5 | `020` | `forecast_properties.heat_risk` | Include heat risk |
@@ -89,7 +89,7 @@ let flags = String(format: "%03X", bits)
 |---|---|---|
 | Forecast only, no optional fields | `000` | `TA1 44.0512 -123.0921 000` |
 | Track alerts, no forecast | `001` + `002` = `003` | `TA1 44.0512 -123.0921 003` |
-| Track alerts, avalanche forecast, relative humidity, wind gust | `001` + `004` + `040` + `800` = `845` | `TA1 44.0512 -123.0921 845` |
+| Track alerts, track avalanche danger, relative humidity, wind gust | `001` + `004` + `040` + `800` = `845` | `TA1 44.0512 -123.0921 845` |
 | Track alerts, visibility, snow level, wind gust | `001` + `080` + `400` + `800` = `C81` | `TA1 39.1968 -120.2354 C81` |
 | Every option on | `FFF` | `TA1 44.0512 -123.0921 FFF` |
 
