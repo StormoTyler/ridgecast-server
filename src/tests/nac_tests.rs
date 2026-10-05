@@ -155,7 +155,7 @@ async fn test_point_in_zone_without_forecast()
     // Central Cascades is in season but has no start_date
     let avy = load_avy();
     let result = nac::check_avy_geometry(&make_point(44.19, -121.75), &avy).await;
-    assert!(matches!(result, Err(NACError::NoForecastError)));
+    assert!(matches!(result, Err(NACError::NoForecastError(id)) if id == "2470"));
 }
 
 #[tokio::test]
@@ -197,6 +197,26 @@ async fn test_avy_id_with_no_stored_forecast()
 
     let stored = tracker.avy.expect("forecast should be stored");
     assert_eq!(stored.start_date, current_forecast(&avy).start_date);
+}
+
+#[tokio::test]
+async fn test_avy_id_for_zone_without_forecast()
+{
+    // Central Cascades has no start_date, so there is no forecast to store yet
+    let avy = load_avy();
+    let mut tracker = make_tracker(Some("2470"), None);
+    assert!(!nac::check_avy_id(&mut tracker, &avy).await);
+    assert!(tracker.avy.is_none());
+}
+
+#[tokio::test]
+async fn test_avy_id_for_off_season_zone()
+{
+    // Chugach State Park is off season
+    let avy = load_avy();
+    let mut tracker = make_tracker(Some("2818"), None);
+    assert!(!nac::check_avy_id(&mut tracker, &avy).await);
+    assert!(tracker.avy.is_none());
 }
 
 #[tokio::test]

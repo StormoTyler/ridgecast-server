@@ -295,6 +295,10 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     };
 
     let mut avy_notice = None;
+    // zone id of a tracked zone that has no current forecast
+    let mut no_forecast_id = None;
+    // an off season zone is not tracked
+    let mut track_avy = forecast_vars.track_avy;
     let zone = if forecast_vars.track_avy
     {
         let checked = match load_avy(db).await
@@ -306,14 +310,16 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         match checked
         {
             Ok(zone) => zone,
-            Err(NACError::NoForecastError) =>
+            Err(NACError::NoForecastError(id)) =>
             {
                 avy_notice = Some("There is no current avalanche forecast for this location.");
+                no_forecast_id = Some(id);
                 None
             }
             Err(NACError::OffSeasonError) =>
             {
                 avy_notice = Some("The avalanche center for this location is in its off season.");
+                track_avy = false;
                 None
             }
             // avalanche data could not be read
@@ -336,18 +342,21 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         }
     };
     let (avy_id, avy) = zone.unzip();
+    // a zone without a current forecast is tracked with no stored forecast,
+    // so its next forecast is reported as new
+    let avy_id = avy_id.or(no_forecast_id);
 
-    if forecast_vars.track_alerts || forecast_vars.track_avy
+    if forecast_vars.track_alerts || track_avy
     {
         // one tracker covers both options, its forecast_vars record which are on
         let user_point = UserPoint
         {
             user: user.to_string(),
-            forecast_vars: forecast_vars.clone(),
+            forecast_vars: ForecastVars { track_avy, ..forecast_vars.clone() },
             point: point.clone(),
             // only an avalanche tracker stores its zone
-            avy: if forecast_vars.track_avy { avy.clone() } else { None },
-            avy_id: if forecast_vars.track_avy { avy_id } else { None },
+            avy: if track_avy { avy.clone() } else { None },
+            avy_id: if track_avy { avy_id } else { None },
             time_added: chrono::Utc::now(),
         };
         if let Err(e) = add_alert_tracker(user_point, db).await

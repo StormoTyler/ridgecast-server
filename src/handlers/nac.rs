@@ -41,7 +41,8 @@ pub enum NACError
     #[error("could not complete avalanche danger check")]
     CheckError,
     #[error("no current avalanche forecast available")]
-    NoForecastError,
+    // carries the zone id, so the zone can still be tracked
+    NoForecastError(String),
     #[error("relevant avalanche center is in its off season")]
     OffSeasonError,
 }
@@ -185,7 +186,7 @@ pub async fn check_avy_geometry(point: &Point, avy_data: &AvyHashMap) ->
     }
     if area.properties.start_date.is_none()
     {
-        return Err(NACError::NoForecastError);
+        return Err(NACError::NoForecastError(id.clone()));
     }
     Ok(Some((id.clone(), area.properties.clone())))
 }
@@ -201,6 +202,12 @@ pub async fn check_avy_id(user_point: &mut UserPoint, avy_data: &AvyHashMap) -> 
     {
         return false;
     };
+
+    // a zone without a current forecast has nothing new to report
+    if area.properties.off_season == Some(true) || area.properties.start_date.is_none()
+    {
+        return false;
+    }
 
     // each new forecast is issued with a new start_date
     let is_new = user_point.avy.as_ref()
