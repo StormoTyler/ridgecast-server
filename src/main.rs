@@ -29,6 +29,8 @@ mod database;
 use crate::database::DB;
 mod models;
 mod sms;
+#[cfg(test)]
+mod tests;
 use crate::models::{UserPoint, Point, ForecastVars, ForecastProperties, PointGeometry, PointProperties,
     NWR, Alerts, Alert, GeometryTypes, AlertData,
     Geocode, AlertsSorted, Forecast, Properties,

@@ -6,7 +6,7 @@ use std::io;
 use thiserror::Error;
 use geojson;
 use geojson::GeometryValue;
-use geo::Contains;
+use geo::Intersects;
 use geo_types::{Polygon, line_string, point};
 use once_cell::sync::Lazy;
 use std::time::Duration;
@@ -68,8 +68,17 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
         }
         result => result?,
     };
-    let mut alerts = Alerts { features: raw.parse("NWS alerts") };
+    let alerts = Alerts { features: raw.parse("NWS alerts") };
 
+    let alerts_sorted = sort_alerts(alerts);
+    println!("{:?}", alerts_sorted);
+    Ok(alerts_sorted)
+}
+
+// buckets alerts by whether they have usable polygon geometry,
+// so check_alerts can match by polygon or by SAME code
+pub fn sort_alerts(mut alerts: Alerts) -> AlertsSorted
+{
     let mut alerts_sorted = AlertsSorted::default();
 
     for alert in alerts.features.iter_mut()                                                
@@ -121,10 +130,9 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
                     alerts_sorted.add_same_code_alert(same_code.to_string(), alert);
                 }
             }
-        }                                                                           
-    }                                                                                 
-    println!("{:?}", alerts_sorted);
-    Ok(alerts_sorted)
+        }
+    }
+    alerts_sorted
 }
 
 pub fn check_alerts(alerts: &AlertsSorted, point: &Point) -> Vec<Alert>
@@ -137,19 +145,20 @@ pub fn check_alerts(alerts: &AlertsSorted, point: &Point) -> Vec<Alert>
         println!("alert matched from samecode");
     }
 
-    // alerts with geometry: check whether the polygon contains the point
+    // alerts with geometry: check whether the point is inside the polygon
+    // or on its boundary, so a point on the edge of an alert area still matches
     if let Some(coordinates) = point.geometry.coordinates
     {
         for alert in alerts.with_geometry.iter()
         {
-            let contains = match &alert.geometry
+            let intersects = match &alert.geometry
             {
-                Some(GeometryTypes::Polygon(value)) => value.contains(&coordinates),
-                Some(GeometryTypes::MultiPolygon(value)) => value.contains(&coordinates),
+                Some(GeometryTypes::Polygon(value)) => value.intersects(&coordinates),
+                Some(GeometryTypes::MultiPolygon(value)) => value.intersects(&coordinates),
                 _ => false,
             };
 
-            if contains
+            if intersects
             {
                 println!("alert matched via geometry!");
                 checked.push(alert.clone());
