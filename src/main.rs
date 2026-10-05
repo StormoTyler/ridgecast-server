@@ -148,6 +148,7 @@ async fn new_forecast(State(db): State<DB>) -> Response
         forecast_vars: ForecastVars::default(),
         point: forecast.point.clone(),
         avy: None,
+        avy_id: None,
         time_added: chrono::Utc::now(),
     };
     if let Err(e) = add_alert_tracker(user_point, &db).await

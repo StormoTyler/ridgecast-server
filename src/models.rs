@@ -15,6 +15,9 @@ pub struct UserPoint
    pub forecast_vars: ForecastVars,
    pub point: Point,
    pub avy: Option<AvyProperties>,
+   // NAC id of the tracked zone, the key into AvyHashMap.lookup_map
+   #[serde(default)]
+   pub avy_id: Option<String>,
    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
    pub time_added: DateTime<Utc>,
 }                          
@@ -68,7 +71,7 @@ pub struct Point
 #[derive(Debug, Serialize, Deserialize, Clone)]              
 pub struct PointGeometry                                     
 {                                                            
-    pub coordinates: Option<geo::Point>,                         
+    pub coordinates: geo::Point,                         
 }                                                            
                                                              
 #[derive(Debug, Serialize, Deserialize, Clone)]              
@@ -406,7 +409,7 @@ impl RawFeatures
 }
 
 // shared data structures for dealing with datetime
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum DateTimeTypes
 {
