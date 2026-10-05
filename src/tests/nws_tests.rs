@@ -1,4 +1,6 @@
-// tests for nws::check_alerts against a saved /alerts/active response
+// tests for nws::sort_alerts and nws::check_alerts against a saved /alerts/active response
+use std::collections::HashSet;
+
 use crate::handlers::nws;
 use crate::models::{Alert, Alerts, AlertsSorted, NWR, Point, PointGeometry,
     PointProperties, RawFeatures};
@@ -18,6 +20,20 @@ fn load_alerts() -> AlertsSorted
     let raw: RawFeatures = serde_json::from_str(TEST_DATA)
         .expect("test data should be a geojson feature collection");
     nws::sort_alerts(Alerts { features: raw.parse("NWS alerts test data") })
+}
+
+// ids of the features in the raw test data, read straight from the json
+// so features the parser would skip are still counted
+fn raw_feature_ids(with_geometry: bool) -> HashSet<String>
+{
+    let raw: RawFeatures = serde_json::from_str(TEST_DATA)
+        .expect("test data should be a geojson feature collection");
+    raw.features.iter()
+        .filter(|feature| feature["geometry"].is_null() != with_geometry)
+        .map(|feature| feature["id"].as_str()
+            .expect("every test feature should have an id")
+            .to_string())
+        .collect()
 }
 
 fn make_point(lat: f64, lon: f64, same_code: &str) -> Point
@@ -90,4 +106,45 @@ fn check_alerts_point_on_geometry_boundary()
     let matched = nws::check_alerts(&alerts, &point);
 
     assert_eq!(ids(&matched), vec![FLOOD_ADVISORY_ID]);
+}
+
+#[test]
+fn sort_alerts_puts_geometry_alerts_only_in_with_geometry()
+{
+    let alerts = load_alerts();
+    let geometry_ids = raw_feature_ids(true);
+    let sorted_geometry_ids: HashSet<String> = ids(&alerts.with_geometry)
+        .into_iter().map(String::from).collect();
+    // an alert is listed under each of its SAME codes,
+    // so collect the ids across every bucket
+    let same_code_ids: HashSet<&str> = alerts.by_same_code.values()
+        .flat_map(|bucket| ids(bucket))
+        .collect();
+
+    assert!(!geometry_ids.is_empty(), "test data should contain alerts with geometry");
+    let missing: Vec<&String> = geometry_ids.difference(&sorted_geometry_ids).collect();
+    assert!(missing.is_empty(), "alerts with geometry missing from with_geometry: {missing:?}");
+    let double_dipped: Vec<&String> = geometry_ids.iter()
+        .filter(|id| same_code_ids.contains(id.as_str()))
+        .collect();
+    assert!(double_dipped.is_empty(),
+        "alerts with geometry also in by_same_code: {double_dipped:?}");
+}
+
+#[test]
+fn sort_alerts_keeps_every_alert()
+{
+    let alerts = load_alerts();
+    let all_ids: HashSet<String> = raw_feature_ids(true)
+        .union(&raw_feature_ids(false)).cloned().collect();
+    let sorted_ids: HashSet<&str> = ids(&alerts.with_geometry).into_iter()
+        .chain(alerts.by_same_code.values().flat_map(|bucket| ids(bucket)))
+        .collect();
+
+    let skipped: Vec<&String> = all_ids.iter()
+        .filter(|id| !sorted_ids.contains(id.as_str()))
+        .collect();
+    assert!(skipped.is_empty(),
+        "{} of {} alerts were skipped by sort_alerts: {skipped:?}",
+        skipped.len(), all_ids.len());
 }
