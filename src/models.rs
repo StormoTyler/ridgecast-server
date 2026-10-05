@@ -2,7 +2,7 @@ use thiserror::Error;
 use geojson;
 use geo;
 use geo_types;
-use chrono::{DateTime, FixedOffset, format::ParseError};
+use chrono::{DateTime, FixedOffset, Utc, format::ParseError};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::json;
 use std::collections::HashMap;
@@ -12,9 +12,38 @@ use std::collections::HashMap;
 pub struct UserPoint       
 {                          
    pub user: String,          
+   pub forecast_vars: ForecastVars,
    pub point: Point,
    pub avy: Option<AvyProperties>,
+   #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+   pub time_added: DateTime<Utc>,
 }                          
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+// data structure for parsing SMS messages from the TrailAlert
+// IOS and Android apps
+pub struct ForecastVars
+{
+    pub track_alerts: bool,
+    pub no_forecast: bool,
+    pub avy: bool,
+    pub forecast_properties: ForecastProperties,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+// optional weather forecast categories
+pub struct ForecastProperties
+{
+    pub elevation: bool,
+    pub wet_bulb_globe_temperature: bool,
+    pub heat_risk: bool,
+    pub relative_humidity: bool,
+    pub visibility: bool,
+    pub ceiling_height: bool,
+    pub pressure: bool,
+    pub snow_level: bool,
+    pub wind_gust: bool,
+}
                            
 #[derive(Debug)]           
 pub struct User            
@@ -250,6 +279,13 @@ impl NWSError
     pub fn is_timeout(&self) -> bool
     {
         matches!(self, NWSError::APICallError(e) if e.is_timeout())
+    }
+
+    // NWS returns 404 for points outside its coverage area
+    pub fn is_not_found(&self) -> bool
+    {
+        matches!(self, NWSError::APICallError(e)
+            if e.status() == Some(reqwest::StatusCode::NOT_FOUND))
     }
 
     // the response arrived but its body was not valid json
