@@ -28,7 +28,8 @@ use crate::handlers::{nws, nac};
 mod database;
 use crate::database::DB;
 mod models;
-use crate::models::{UserPoint, Point, PointGeometry, PointProperties,
+mod sms;
+use crate::models::{UserPoint, Point, ForecastVars, ForecastProperties, PointGeometry, PointProperties,
     NWR, Alerts, Alert, GeometryTypes, AlertData,
     Geocode, AlertsSorted, Forecast, Properties,
     Elevation, IntVec, TimeInt, FloatVec, TimeFloat, ForecastResponse,
@@ -51,6 +52,10 @@ pub enum APIError
     UpstreamTimeout,
     #[error("database error")]
     DatabaseError,
+    #[error("lat must be between -90 and 90 and lon between -180 and 180")]
+    InvalidLocation,
+    #[error("location is outside National Weather Service coverage")]
+    LocationNotCovered,
 }
 
 impl IntoResponse for APIError
@@ -67,6 +72,8 @@ impl IntoResponse for APIError
             APIError::UpstreamTimeout => StatusCode::GATEWAY_TIMEOUT,
             APIError::NoAlertsStored => StatusCode::SERVICE_UNAVAILABLE,
             APIError::DatabaseError => StatusCode::INTERNAL_SERVER_ERROR,
+            APIError::InvalidLocation => StatusCode::BAD_REQUEST,
+            APIError::LocationNotCovered => StatusCode::NOT_FOUND,
         };
 
         (status, self.to_string()).into_response()
@@ -92,7 +99,7 @@ fn app(db: DB) -> Router
         .route("/forecast", get(new_forecast))
         .route("/forecast/scheduled", post(schedule_forecast))
         .route("/alerts", get(get_alerts))
-        .route("/check-alerts", post(check_alerts))
+        .route("/check-alerts", get(check_alerts))
         .route("/get-avy", get(get_avy))
         .route("/check-avy", get(check_avy))
         .with_state(db)
@@ -132,8 +139,11 @@ async fn new_forecast(State(db): State<DB>) -> Response
     let user_point = UserPoint
     {
         user: "whatever".to_string(),
+        // all options off: forecast only, no alert tracking
+        forecast_vars: ForecastVars::default(),
         point: forecast.point.clone(),
         avy: None,
+        time_added: chrono::Utc::now(),
     };
     if let Err(e) = add_alert_tracker(user_point, &db).await
     {
@@ -183,9 +193,25 @@ async fn get_alerts(State(db): State<DB>) -> Response
     //random_string.into_response()
 }
 
-async fn check_alerts(State(db): State<DB>, Json(user_point): Json<UserPoint>)
+#[derive(Debug, Deserialize)]
+struct Location
+{
+    lat: f32,
+    lon: f32,
+}
+
+// GET /check-alerts?lat=44.0512&lon=-123.0921
+async fn check_alerts(State(db): State<DB>, Query(location): Query<Location>)
     -> Response
 {
+    let Location { lat, lon } = location;
+    // f32 parsing also accepts "NaN" and "inf", which fail is_finite
+    if !(lat.is_finite() && lon.is_finite() && lat.abs() <= 90.0 && lon.abs() <= 180.0)
+    {
+        return APIError::InvalidLocation.into_response();
+    }
+
+    // read the snapshot first, so a missing snapshot fails without calling NWS
     let alerts = match db.alerts_collection.find_one(doc! {}).await
     {
         Ok(Some(alerts)) => alerts,
@@ -197,7 +223,19 @@ async fn check_alerts(State(db): State<DB>, Json(user_point): Json<UserPoint>)
         }
     };
 
-    let active_alerts = nws::check_alerts(&alerts, &user_point.point);
+    let point = match nws::get_point(lat, lon).await
+    {
+        Ok(point) => point,
+        Err(e) if e.is_not_found() => return APIError::LocationNotCovered.into_response(),
+        Err(e) =>
+        {
+            eprintln!("check_alerts: failed to get point {lat},{lon}: {e}");
+            return if e.is_timeout() { APIError::UpstreamTimeout }
+                else { APIError::NWSError }.into_response();
+        }
+    };
+
+    let active_alerts = nws::check_alerts(&alerts, &point);
     Json(active_alerts).into_response()
 }
 
