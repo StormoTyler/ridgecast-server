@@ -5,16 +5,18 @@ use serde_json;
 use std::io;
 use thiserror::Error;
 use geojson;
+use geojson::GeometryValue;
 use geo::Contains;
 use geo_types::{Polygon, line_string, point};
 use once_cell::sync::Lazy;
+use std::time::Duration;
 use chrono::{DateTime, FixedOffset, format::ParseError};
 
 use crate::models::{Point, PointGeometry, PointProperties,
     NWR, Alerts, Alert, GeometryTypes,
     AlertData, Geocode, AlertsSorted,
     Forecast, Properties, Elevation, IntVec, TimeInt,
-    FloatVec, TimeFloat, ForecastResponse, NWSError};
+    FloatVec, TimeFloat, ForecastResponse, NWSError, RawFeatures};
 
 const BASE_URL: &str = "https://api.weather.gov";
 
@@ -22,20 +24,23 @@ static NWS_CLIENT: Lazy<Client> = Lazy::new(||
 {
     Client::builder()
         .user_agent("User-Agent: (TrailAlert, stormotyler@gmail.com)")
+        // fail fast if the host is unreachable
+        .connect_timeout(Duration::from_secs(10))
+        // cap the whole request, including reading the body
+        .timeout(Duration::from_secs(30))
         .build()
         .expect("Failed to build client")
 });
 
-pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
+async fn fetch_alerts() -> Result<RawFeatures, NWSError>
 {
-    //println!("get_alerts called)");
-
     let alerts_response =
         NWS_CLIENT
         .get(format!("{BASE_URL}/alerts/active?status=actual"))
         .send()
-        .await?;
-    
+        .await?
+        .error_for_status()?;
+
     //println!("data received from NWS endpoint");
 
     let alerts_json: serde_json::Value =
@@ -46,13 +51,24 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
     //println!("NWS data jsonified");
     //println!("{:?}", alerts_json);
 
-    //let alerts = serde_json::from_value(alerts_json)?;
-    let mut alerts: Alerts = match 
-        serde_json::from_value(alerts_json)
+    Ok(serde_json::from_value(alerts_json)?)
+}
+
+pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
+{
+    //println!("get_alerts called)");
+
+    // retry once if the response is malformed
+    let raw = match fetch_alerts().await
+    {
+        Err(e) if e.is_malformed() =>
         {
-            Ok(alert) => alert,
-            Err(_e) => return Err(NWSError::JsonError(_e)),
-        };
+            eprintln!("get_alerts: malformed response, retrying once: {e}");
+            fetch_alerts().await?
+        }
+        result => result?,
+    };
+    let mut alerts = Alerts { features: raw.parse("NWS alerts") };
 
     let mut alerts_sorted = AlertsSorted::default();
 
@@ -60,16 +76,28 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
     {                                                                                      
         match &alert.geometry                                             
         {                                                                                  
-            Some(GeometryTypes::Geojson(geo)) =>                                           
-            {                                                                              
-                match geo.clone().try_into()                                               
-                {                                                                          
-                    Ok(new_geo) => 
+            Some(GeometryTypes::Geojson(geo)) =>
+            {
+                // the geojson type tag decides which geo_types struct to convert into
+                let converted = match &geo.value
+                {
+                    GeometryValue::MultiPolygon { .. } =>
+                        geo_types::MultiPolygon::try_from(geo)
+                        .map(GeometryTypes::MultiPolygon),
+                    _ =>
+                        geo_types::Polygon::try_from(geo)
+                        .map(GeometryTypes::Polygon),
+                };
+
+                match converted
+                {
+                    Ok(new_geo) =>
                     {
-                        alert.geometry = Some(GeometryTypes::Polygon(new_geo));                  
+                        alert.geometry = Some(new_geo);
                         alerts_sorted.add_geometry_alert(alert);
                     }
-                    Err(_e) => 
+                    // alerts without a SAME code are dropped here
+                    Err(_e) =>
                     {
                         for same_code in alert.properties.geocode.same.iter()
                         {
@@ -95,11 +123,11 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
             }
         }                                                                           
     }                                                                                 
-
+    println!("{:?}", alerts_sorted);
     Ok(alerts_sorted)
 }
 
-pub async fn check_alerts(alerts: AlertsSorted, point: Point) -> Vec<Alert>
+pub fn check_alerts(alerts: &AlertsSorted, point: &Point) -> Vec<Alert>
 {
     // alerts without geometry: direct hash lookup by the point's SAME code
     let mut checked: Vec<Alert> =
@@ -114,44 +142,47 @@ pub async fn check_alerts(alerts: AlertsSorted, point: Point) -> Vec<Alert>
     {
         for alert in alerts.with_geometry.iter()
         {
-            if let Some(GeometryTypes::Polygon(value)) = &alert.geometry
+            let contains = match &alert.geometry
             {
-                if value.contains(&coordinates)
-                {
-                    println!("alert matched via geometry!");
-                    checked.push(alert.clone());
-                }
+                Some(GeometryTypes::Polygon(value)) => value.contains(&coordinates),
+                Some(GeometryTypes::MultiPolygon(value)) => value.contains(&coordinates),
+                _ => false,
+            };
+
+            if contains
+            {
+                println!("alert matched via geometry!");
+                checked.push(alert.clone());
             }
         }
     }
     return checked
 }
 
-// update to also return the points data
-// may have to update the error handling to still return points
-// even if there is an issue with the forecast
-// but maybe its better to return neither if there is an issue
-pub async fn get_forecast(lat: f32, lon: f32, alerts: AlertsSorted) ->
+pub async fn get_point(lat:f32, lon: f32) -> Result<Point, NWSError>
+{
+    let points_response =                                   
+        NWS_CLIENT                                          
+        .get(format!("{BASE_URL}/points/{lat},{lon}"))      
+        .send()                                             
+        .await?                                             
+        .error_for_status()?;                               
+                                                         
+     let points_json: serde_json::Value =                    
+        points_response                                     
+        .json()                                             
+        .await?;                                            
+                                                         
+    let point: Point = serde_json::from_value(points_json)?;
+
+    Ok(point)
+}
+
+// fetches gridpoint data from NWS API gridpoints endpoint 
+pub async fn get_forecast(lat: f32, lon: f32, alerts: &AlertsSorted) ->
     Result<ForecastResponse, NWSError>
 {
-    let points_response =
-        NWS_CLIENT
-        .get(format!("{BASE_URL}/points/{lat},{lon}"))
-        .send()
-        .await?;
-                                                                                                                                                                         
-    let points_json: serde_json::Value =
-        points_response
-        .json()
-        .await?;
-
-    let point: Point = match
-        serde_json::from_value(points_json)
-        {
-        Ok(point) => point,
-        Err(_e) => return Err(NWSError::NWSResponseError),
-        };
-    
+    let point = get_point(lat, lon).await?;
     //point.geometry = match &point.geometry                                             
     //{                                                                                  
     //    Some(PointGeometry::Geojson(geo)) =>                                           
@@ -166,7 +197,6 @@ pub async fn get_forecast(lat: f32, lon: f32, alerts: AlertsSorted) ->
     //    None => None,                                                                  
     //};                                                                                 
 
-    println!("{:?}", point.geometry);
 
     //println!("{:?}", points);
     //println!("{BASE_URL}/gridpoints/{}/{},{}",
@@ -181,7 +211,8 @@ pub async fn get_forecast(lat: f32, lon: f32, alerts: AlertsSorted) ->
         point.properties.grid_x,
         point.properties.grid_y))                                                                                                                            
         .send()
-        .await?;                                                                                                                                                          
+        .await?
+        .error_for_status()?;                                                                                                                                                          
 
     let gridpoints: serde_json::Value = 
         gridpoints_response
@@ -195,7 +226,7 @@ pub async fn get_forecast(lat: f32, lon: f32, alerts: AlertsSorted) ->
     //println!("forecast is: {:?}", forecast);
 
     let active_alerts: Vec<Alert> =
-        check_alerts(alerts, point.clone()).await;
+        check_alerts(alerts, &point);
 
     let forecast_response = ForecastResponse
     {

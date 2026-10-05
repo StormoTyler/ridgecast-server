@@ -3,7 +3,7 @@ use geojson;
 use geo;
 use geo_types;
 use chrono::{DateTime, FixedOffset, format::ParseError};
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -83,6 +83,8 @@ pub struct Alerts
 #[derive(Debug, Serialize, Deserialize, Clone)]              
 pub struct Alert                                             
 {                                                            
+   // NWS alert id, used to tell which alerts a user was already sent
+   pub id: Option<String>,
    pub geometry: Option<GeometryTypes>,                         
    pub properties: AlertData,                                   
 }                                                            
@@ -100,13 +102,14 @@ pub struct AlertData
    pub event: Option<String>,                                   
    pub headline: Option<String>,                                
    pub instruction: Option<String>,                             
+   #[serde(default)]
    pub geocode: Geocode,                                        
 }                                                            
                                                              
-#[derive(Debug, Serialize, Deserialize, Clone)]              
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]              
 pub struct Geocode                                           
 {                                                            
-    #[serde(rename = "SAME")]                                
+    #[serde(rename = "SAME", default)]                                
     pub same: Vec<String>,                                       
 }                                                            
                                                              
@@ -163,11 +166,11 @@ pub struct Properties
    pub max_temperature: FloatVec,                               
    pub min_temperature: FloatVec,                               
    pub apparent_temperature: FloatVec,                          
-   pub wet_bulb_globe_temperature: FloatVec,                    
-   pub heat_risk: IntVec,                                       
+   pub wet_bulb_globe_temperature: Option<FloatVec>,                    
+   pub heat_risk: Option<IntVec>,                                       
    pub relative_humidity: IntVec,                               
    pub visibility: FloatVec,                                    
-   pub ceiling_height: FloatVec,                                
+   pub ceiling_height: Option<FloatVec>,                                
    pub pressure: FloatVec,                                      
    pub quantitative_precipitation: FloatVec,                    
    pub probability_of_precipitation: IntVec,                    
@@ -227,20 +230,40 @@ pub struct ForecastResponse
 #[derive(Debug, Error)]                                      
 pub enum NWSError                                            
 {                                                            
-    #[error("could not retrieve data from NWS API")]         
-    APICallError(#[from] reqwest::Error),                    
-    #[error("received error response from NWS endpoint")]    
-    NWSResponseError,                                        
-    #[error("json parsing failed")]                          
-    JsonError(#[from] serde_json::Error),                    
+    #[error("could not retrieve data from NWS API: {0}")]
+    APICallError(#[from] reqwest::Error),
+    #[error("received error response from NWS endpoint")]
+    NWSResponseError,
+    #[error("json parsing failed: {0}")]
+    JsonError(#[from] serde_json::Error),
     #[error("failed to fetch points")]                       
     PointsError,                                             
     #[error("invalid points data")]                          
     PointsDataError,                                         
-    #[error("failed geometry conversion")]                   
-    GeometryError,                                           
-                                                             
-}                                                            
+    #[error("failed geometry conversion")]
+    GeometryError,
+
+}
+
+impl NWSError
+{
+    pub fn is_timeout(&self) -> bool
+    {
+        matches!(self, NWSError::APICallError(e) if e.is_timeout())
+    }
+
+    // the response arrived but its body was not valid json
+    // or not shaped like the expected data
+    pub fn is_malformed(&self) -> bool
+    {
+        match self
+        {
+            NWSError::APICallError(e) => e.is_decode(),
+            NWSError::JsonError(_) => true,
+            _ => false,
+        }
+    }
+}
 // end nws data models
 
 // data structures for NAC data
@@ -317,6 +340,41 @@ pub enum GeometryTypes
     Polygon(geo_types::Polygon),
     MultiPolygon(geo_types::MultiPolygon),
 }                                              
+
+// shared data structures for parsing geojson feature collections
+// features are kept as raw json so one malformed feature
+// can be skipped instead of failing the whole collection
+#[derive(Debug, Deserialize)]
+pub struct RawFeatures
+{
+    pub features: Vec<serde_json::Value>,
+}
+
+impl RawFeatures
+{
+    pub fn parse<T: DeserializeOwned>(self, source: &str) -> Vec<T>
+    {
+        self.features
+            .into_iter()
+            .filter_map(|feature|
+            {
+                let id = feature.get("id")
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "without id".to_string());
+
+                match serde_json::from_value(feature)
+                {
+                    Ok(parsed) => Some(parsed),
+                    Err(e) =>
+                    {
+                        eprintln!("{source}: skipping feature {id}: {e}");
+                        None
+                    }
+                }
+            })
+            .collect()
+    }
+}
 
 // shared data structures for dealing with datetime
 #[derive(Debug, Clone, Serialize, Deserialize)]

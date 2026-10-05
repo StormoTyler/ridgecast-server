@@ -41,11 +41,15 @@ pub enum APIError
     NWSError,
     #[error("received error from NAC endpoint")]
     NACError,
-    #[error("error: not a Forecast")]
+    #[error("could not retrieve forecast from NWS")]
     ForecastError,
-    #[error("error: could not retrieve alerts")]
+    #[error("could not retrieve alerts from NWS")]
     AlertsError,
-    #[error("error retrieving from database")]
+    #[error("no alerts stored yet, fetch them with GET /alerts first")]
+    NoAlertsStored,
+    #[error("upstream API timed out")]
+    UpstreamTimeout,
+    #[error("database error")]
     DatabaseError,
 }
 
@@ -53,16 +57,19 @@ impl IntoResponse for APIError
 {
     fn into_response(self) -> Response
     {
-        let body = match self
+        let status = match self
         {
-            APIError::NWSError => "recieved error from NWS endpoint",
-            APIError::NACError => "received error from NAC endpoint",
-            APIError::ForecastError => "error, not a forecast",
-            APIError::AlertsError => "error, coud not retrieve alerts",
-            APIError::DatabaseError => "error retreiving from database",
+            // upstream API failed or returned bad data
+            APIError::NWSError
+            | APIError::NACError
+            | APIError::ForecastError
+            | APIError::AlertsError => StatusCode::BAD_GATEWAY,
+            APIError::UpstreamTimeout => StatusCode::GATEWAY_TIMEOUT,
+            APIError::NoAlertsStored => StatusCode::SERVICE_UNAVAILABLE,
+            APIError::DatabaseError => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
-        (axum::http::StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
+        (status, self.to_string()).into_response()
     }
 }
 
@@ -101,15 +108,24 @@ async fn new_forecast(State(db): State<DB>) -> Response
     let alerts = match db.alerts_collection.find_one(doc! {}).await
     {
         Ok(Some(alerts)) => alerts,
-        Ok(None) => return APIError::AlertsError.into_response(),
-        Err(_e) => return APIError::DatabaseError.into_response(),
+        Ok(None) => return APIError::NoAlertsStored.into_response(),
+        Err(e) =>
+        {
+            eprintln!("new_forecast: failed to read alerts from database: {e}");
+            return APIError::DatabaseError.into_response();
+        }
     };
 
     let forecast = match
-    nws::get_forecast(44.0, -123.0, alerts).await
+    nws::get_forecast(44.0, -123.0, &alerts).await
     {
         Ok(result) => result,
-        Err(_e) => return APIError::ForecastError.into_response(),
+        Err(e) =>
+        {
+            eprintln!("new_forecast: failed to get forecast: {e}");
+            return if e.is_timeout() { APIError::UpstreamTimeout }
+                else { APIError::ForecastError }.into_response();
+        }
     };
     //println!("{:?}", forecast);
 
@@ -119,13 +135,18 @@ async fn new_forecast(State(db): State<DB>) -> Response
         point: forecast.point.clone(),
         avy: None,
     };
-    add_alert_tracker(user_point, &db).await;
+    if let Err(e) = add_alert_tracker(user_point, &db).await
+    {
+        eprintln!("new_forecast: failed to save user point: {e}");
+        return APIError::DatabaseError.into_response();
+    }
     Json(forecast).into_response()
 }
 
-async fn add_alert_tracker(user_point: UserPoint, db: &DB)
+async fn add_alert_tracker(user_point: UserPoint, db: &DB) -> mongodb::error::Result<()>
 {
-    db.points_collection.insert_one(&user_point).await;
+    db.points_collection.insert_one(&user_point).await?;
+    Ok(())
 }
 
 async fn schedule_forecast()
@@ -139,12 +160,24 @@ async fn get_alerts(State(db): State<DB>) -> Response
         nws::get_alerts().await
         {
             Ok(result) => result,
-            Err(_e) => return APIError::AlertsError.into_response(),
+            Err(e) =>
+            {
+                eprintln!("get_alerts: failed to get alerts: {e}");
+                return if e.is_timeout() { APIError::UpstreamTimeout }
+                    else { APIError::AlertsError }.into_response();
+            }
         };
 
-    db.alerts_collection.delete_many(doc! {}).await;
-
-    db.alerts_collection.insert_one(&alerts).await;
+    // swap the stored snapshot in one operation, so a failed write
+    // never leaves the collection empty
+    if let Err(e) = db.alerts_collection
+        .replace_one(doc! {}, &alerts)
+        .upsert(true)
+        .await
+    {
+        eprintln!("get_alerts: failed to store alerts: {e}");
+        return APIError::DatabaseError.into_response();
+    }
     Json(alerts).into_response()
     //let random_string = String::from("Sucessfully inserted alerts into database");
     //random_string.into_response()
@@ -156,11 +189,15 @@ async fn check_alerts(State(db): State<DB>, Json(user_point): Json<UserPoint>)
     let alerts = match db.alerts_collection.find_one(doc! {}).await
     {
         Ok(Some(alerts)) => alerts,
-        Ok(None) => return APIError::AlertsError.into_response(),
-        Err(_e) => return APIError::DatabaseError.into_response(),
+        Ok(None) => return APIError::NoAlertsStored.into_response(),
+        Err(e) =>
+        {
+            eprintln!("check_alerts: failed to read alerts from database: {e}");
+            return APIError::DatabaseError.into_response();
+        }
     };
 
-    let active_alerts = nws::check_alerts(alerts, user_point.point).await;
+    let active_alerts = nws::check_alerts(&alerts, &user_point.point);
     Json(active_alerts).into_response()
 }
 
@@ -170,18 +207,25 @@ async fn get_avy(State(db): State<DB>) -> Response
         nac::get_avy().await
         {
             Ok(result) => result,
-            Err(_e) => return APIError::NACError.into_response(),
+            Err(e) =>
+            {
+                eprintln!("get_avy: failed to get avalanche data: {e}");
+                return if e.is_timeout() { APIError::UpstreamTimeout }
+                    else { APIError::NACError }.into_response();
+            }
         };
 
-    db.avy_collection.delete_many(doc! {}).await;
-
-    db.avy_collection.insert_one(&avy).await;
+    // swap the stored snapshot in one operation, so a failed write
+    // never leaves the collection empty
+    if let Err(e) = db.avy_collection
+        .replace_one(doc! {}, &avy)
+        .upsert(true)
+        .await
+    {
+        eprintln!("get_avy: failed to store avalanche data: {e}");
+        return APIError::DatabaseError.into_response();
+    }
     Json(avy).into_response()
-}
-
-async fn store_avy()
-{
-
 }
 
 async fn check_avy()
