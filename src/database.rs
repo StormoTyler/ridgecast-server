@@ -1,13 +1,13 @@
 use mongodb::{bson::doc, error::Result, options::ClientOptions, Client, Collection};
 
 // local modules
-use crate::models::{AlertsSorted, UserPoint, AvalancheData};
+use crate::models::{AlertsSorted, UserPoint, AvyHashMap};
 
 #[derive(Clone, Debug)]
 pub struct DB {
     pub alerts_collection: Collection<AlertsSorted>,
     pub points_collection: Collection<UserPoint>,
-    pub avy_collection: Collection<AvalancheData>,
+    pub avy_collection: Collection<AvyHashMap>,
 }
 
 impl DB {
@@ -28,7 +28,7 @@ impl DB {
 
         let alerts_collection = database.collection::<AlertsSorted>("alerts");
         let points_collection = database.collection::<UserPoint>("points");
-        let avy_collection = database.collection::<AvalancheData>("avy");
+        let avy_collection = database.collection::<AvyHashMap>("avy");
 
         println!("Pinged your database. Successfully connected to MongoDB!");
 

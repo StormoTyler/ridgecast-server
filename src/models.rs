@@ -304,7 +304,6 @@ impl NWSError
 // end nws data models
 
 // data structures for NAC data
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AvalancheData
 {
@@ -415,4 +414,12 @@ pub enum DateTimeTypes
     // don't get matched as naive when deserialized from mongo
     Aware(chrono::DateTime<FixedOffset>),
     Naive(chrono::NaiveDateTime),
+}
+
+// data structure for checking if a point intersects with an avalanche forecast area
+// or if there is a new avalanche forecast for an avalanche tracker
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AvyHashMap
+{
+    pub lookup_map: HashMap<String, AvyArea>
 }

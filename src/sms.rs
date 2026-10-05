@@ -360,7 +360,7 @@ async fn find_avy_zone(point: &Point, db: &DB) -> Result<Option<AvyProperties>, 
     };
 
     // intersects, so a point on a zone boundary still matches
-    let zone = avy.features.into_iter().find(|area| match &area.geometry
+    let zone = avy.lookup_map.into_values().find(|area| match &area.geometry
     {
         GeometryTypes::Polygon(value) => value.intersects(&coordinates),
         GeometryTypes::MultiPolygon(value) => value.intersects(&coordinates),

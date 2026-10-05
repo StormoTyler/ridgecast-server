@@ -13,7 +13,8 @@ use geojson::GeometryValue;
 use chrono_tz::Tz;
 
 // local modules
-use crate::models::{AvalancheData, AvyArea, AvyProperties, AvyWarning, DateTimeTypes, GeometryTypes, RawFeatures};
+use crate::models::{AvalancheData, AvyArea, AvyProperties, AvyWarning, 
+    AvyHashMap, Point, DateTimeTypes, GeometryTypes, RawFeatures};
 
 const BASE_URL: &str = "https://api.avalanche.org/v2/public/products/map-layer";
 
@@ -79,7 +80,7 @@ async fn fetch_avy() -> Result<RawFeatures, NACError>
     Ok(serde_json::from_value(avy_json)?)
 }
 
-pub async fn get_avy() -> Result<AvalancheData, NACError>
+pub async fn get_avy() -> Result<AvyHashMap, NACError>
 {
     // retry once if the response is malformed
     let raw = match fetch_avy().await
@@ -91,11 +92,11 @@ pub async fn get_avy() -> Result<AvalancheData, NACError>
         }
         result => result?,
     };
-    let mut avy = AvalancheData { features: raw.parse("NAC map layer") };
+    let mut features: Vec<AvyArea> = raw.parse("NAC map layer");
 
     //println!("{:?}", avy);
 
-    for area in avy.features.iter_mut()
+    for area in features.iter_mut()
     {
         // NAC dates have no offset but are in UTC,
         // so convert them to the zone's local timezone
@@ -137,11 +138,19 @@ pub async fn get_avy() -> Result<AvalancheData, NACError>
         }
     }
 
-    Ok(avy)
+    // key each zone by its NAC id for direct lookups
+    let lookup_map = features
+        .into_iter()
+        .map(|area| (area.id.to_string(), area))
+        .collect();
+
+    Ok(AvyHashMap { lookup_map })
 }
 
-// checks whether a point is inside an avalanche forecast zone 
+// checks whether a point intersects with an avalanche forecast zone 
 // and returns the area name, avalanche center, and forecast danger
-pub async fn check_avy()
+pub async fn check_avy(point: &Point, avy_data: &AvyHashMap) //-> 
+    //Result<Option<AvyProperties>, NACError
 {
+    
 }
