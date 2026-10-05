@@ -337,13 +337,6 @@ pub struct AvyProperties
     //pub warning: Option<AvyWarningTypes>,
 }
 
-
-
-
-
-
-
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AvyWarning
 {

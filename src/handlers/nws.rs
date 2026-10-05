@@ -192,26 +192,6 @@ pub async fn get_forecast(lat: f32, lon: f32, alerts: &AlertsSorted) ->
     Result<ForecastResponse, NWSError>
 {
     let point = get_point(lat, lon).await?;
-    //point.geometry = match &point.geometry                                             
-    //{                                                                                  
-    //    Some(PointGeometry::Geojson(geo)) =>                                           
-    //    {                                                                              
-    //        match geo.clone().try_into()                                               
-    //        {                                                                          
-    //            Ok(new_geo) => Some(PointGeometry::Point(new_geo)),                  
-    //            Err(_e) => Some(PointGeometry::Geojson(geo.clone())),                  
-    //        }                                                                          
-    //    }                                                                              
-    //    Some(PointGeometry::Point(geo)) => Some(PointGeometry::Point(geo.clone())),
-    //    None => None,                                                                  
-    //};                                                                                 
-
-
-    //println!("{:?}", points);
-    //println!("{BASE_URL}/gridpoints/{}/{},{}",
-    //    points.properties.cwa,
-    //    points.properties.grid_x,
-    //    points.properties.grid_y);
 
     let gridpoints_response =  
         NWS_CLIENT
