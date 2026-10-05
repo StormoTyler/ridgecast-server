@@ -209,6 +209,9 @@ pub struct SmsForecastResponse
     // None when the request set the no_forecast flag
     pub forecast: Option<RequestedForecast>,
     pub alerts: Vec<Alert>,
+    // the avalanche zone containing the point, None outside every zone.
+    // without track_avy it is only included at danger level 3 or higher
+    pub avy: Option<AvyProperties>,
 }
 
 impl RequestedForecast
@@ -250,8 +253,9 @@ impl RequestedForecast
 
 // takes an SmsRequest and returns data for the fields flagged as True
 // adds an alerts tracker or avalanche tracker if those fields are True
+// returns the avalanche zone's data at any danger level when track_avy is True,
+// and only at danger level 3 or higher when it is False
 // user is the sender's phone number, which identifies the user
-// will check phone number against list of approved users - not yet unimplemented!()
 pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     -> Result<SmsForecastResponse, APIError>
 {
@@ -269,13 +273,13 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         }
     };
 
-    let response = if forecast_vars.no_forecast
+    let (point, forecast, active_alerts) = if forecast_vars.no_forecast
     {
         // the point is still needed to check alerts and create trackers
         let point = nws::get_point(lat, lon).await
             .map_err(|e| nws_error("get_point", lat, lon, e, APIError::NWSError))?;
         let active_alerts = nws::check_alerts(&alerts, &point);
-        SmsForecastResponse { point, forecast: None, alerts: active_alerts }
+        (point, None, active_alerts)
     }
     else
     {
@@ -284,27 +288,34 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
             .map_err(|e| nws_error("get_forecast", lat, lon, e, APIError::ForecastError))?;
         let forecast = RequestedForecast::from_properties(
             forecast.properties, &forecast_vars.forecast_properties);
-        SmsForecastResponse { point, forecast: Some(forecast), alerts: active_alerts }
+        (point, Some(forecast), active_alerts)
+    };
+
+    let avy = if forecast_vars.track_avy
+    {
+        find_avy_zone(&point, db).await?
+    }
+    else
+    {
+        // the user did not ask about avalanches, so missing avalanche
+        // data should not fail the rest of the request
+        match get_avy_no_tracker(&point, db).await
+        {
+            Err(APIError::NoAvyStored) => None,
+            result => result?,
+        }
     };
 
     if forecast_vars.track_alerts || forecast_vars.track_avy
     {
-        let avy = if forecast_vars.track_avy
-        {
-            find_avy_zone(&response.point, db).await?
-        }
-        else
-        {
-            None
-        };
-
         // one tracker covers both options, its forecast_vars record which are on
         let user_point = UserPoint
         {
             user: user.to_string(),
             forecast_vars: forecast_vars.clone(),
-            point: response.point.clone(),
-            avy,
+            point: point.clone(),
+            // only an avalanche tracker stores its zone
+            avy: if forecast_vars.track_avy { avy.clone() } else { None },
             time_added: chrono::Utc::now(),
         };
         if let Err(e) = add_alert_tracker(user_point, db).await
@@ -314,7 +325,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         }
     }
 
-    Ok(response)
+    Ok(SmsForecastResponse { point, forecast, alerts: active_alerts, avy })
 }
 
 // maps an NWS error the same way the route handlers do
@@ -343,7 +354,7 @@ async fn find_avy_zone(point: &Point, db: &DB) -> Result<Option<AvyProperties>, 
         Ok(None) => return Err(APIError::NoAvyStored),
         Err(e) =>
         {
-            eprintln!("get_requested_forecast: failed to read avalanche data from database: {e}");
+            eprintln!("find_avy_zone: failed to read avalanche data from database: {e}");
             return Err(APIError::DatabaseError);
         }
     };
@@ -356,4 +367,13 @@ async fn find_avy_zone(point: &Point, db: &DB) -> Result<Option<AvyProperties>, 
         GeometryTypes::Geojson(_) => false,
     });
     Ok(zone.map(|area| area.properties))
+}
+
+// checks if the point is in any avalanche forecast zone
+// returns avy_properties for the area if danger_level >= 3
+async fn get_avy_no_tracker(point: &Point, db: &DB) -> Result<Option<AvyProperties>, APIError>
+{
+    let zone = find_avy_zone(point, db).await?;
+    // NAC rates danger 1 (low) to 5 (extreme), 3 is considerable
+    Ok(zone.filter(|properties| properties.danger_level.is_some_and(|level| level >= 3)))
 }
