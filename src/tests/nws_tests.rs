@@ -49,7 +49,7 @@ fn make_point(lat: f64, lon: f64, same_code: &str) -> Point
             astronomical_data: None,
         },
         id: None,
-        geometry: PointGeometry { coordinates: Some(geo::Point::new(lon, lat)) },
+        geometry: PointGeometry { coordinates: geo::Point::new(lon, lat) },
     }
 }
 

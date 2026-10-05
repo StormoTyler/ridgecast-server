@@ -147,22 +147,20 @@ pub fn check_alerts(alerts: &AlertsSorted, point: &Point) -> Vec<Alert>
 
     // alerts with geometry: check whether the point is inside the polygon
     // or on its boundary, so a point on the edge of an alert area still matches
-    if let Some(coordinates) = point.geometry.coordinates
+    let coordinates = point.geometry.coordinates;
+    for alert in alerts.with_geometry.iter()
     {
-        for alert in alerts.with_geometry.iter()
+        let intersects = match &alert.geometry
         {
-            let intersects = match &alert.geometry
-            {
-                Some(GeometryTypes::Polygon(value)) => value.intersects(&coordinates),
-                Some(GeometryTypes::MultiPolygon(value)) => value.intersects(&coordinates),
-                _ => false,
-            };
+            Some(GeometryTypes::Polygon(value)) => value.intersects(&coordinates),
+            Some(GeometryTypes::MultiPolygon(value)) => value.intersects(&coordinates),
+            _ => false,
+        };
 
-            if intersects
-            {
-                println!("alert matched via geometry!");
-                checked.push(alert.clone());
-            }
+        if intersects
+        {
+            println!("alert matched via geometry!");
+            checked.push(alert.clone());
         }
     }
     return checked
