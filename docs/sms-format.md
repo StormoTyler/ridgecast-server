@@ -14,12 +14,12 @@ Current version: **1**
 A request is one line made up of five fields separated by single spaces:
 
 ```
-TA1 44.0512 -123.0921 845 24
-│   │       │         │   └─ duration   hours a created tracker stays active
-│   │       │         └───── flags      which options are turned on (3 hex digits)
-│   │       └─────────────── longitude  decimal degrees
-│   └─────────────────────── latitude   decimal degrees
-└─────────────────────────── prefix     "TA" followed by the format version
+TA1 44.0512 -123.0921 1845 24
+│   │       │         │    └─ duration   hours a created tracker stays active
+│   │       │         └────── flags      which options are turned on (4 hex digits)
+│   │       └──────────────── longitude  decimal degrees
+│   └──────────────────────── latitude   decimal degrees
+└──────────────────────────── prefix     "TA" followed by the format version
 ```
 
 | Field | Format | Example |
@@ -27,10 +27,10 @@ TA1 44.0512 -123.0921 845 24
 | Prefix | `TA` followed by the format version as a decimal integer | `TA1` |
 | Latitude | Decimal degrees from `-90` to `90`, at most 4 decimal places | `44.0512` |
 | Longitude | Decimal degrees from `-180` to `180`, at most 4 decimal places | `-123.0921` |
-| Flags | Exactly 3 hexadecimal digits (`0`–`9`, `A`–`F`) | `845` |
+| Flags | Exactly 4 hexadecimal digits (`0`–`9`, `A`–`F`) | `1845` |
 | Tracker duration | Whole number of hours from `0` to `168`, 1 to 3 digits | `24` |
 
-The longest possible message, `TA1 -90.0000 -180.0000 FFF 168`, is 30 characters.
+The longest possible message, `TA1 -90.0000 -180.0000 1FFF 168`, is 31 characters.
 
 The sender's phone number identifies the user, so the message body does not
 include an account or user ID.
@@ -50,39 +50,41 @@ include an account or user ID.
 
 ### Flags
 
-The flags field packs 12 on/off options into a 12-bit number written as 3
-hexadecimal digits. A bit set to `1` means the option is on.
+The flags field packs 13 on/off options into a 16-bit number written as 4
+hexadecimal digits. A bit set to `1` means the option is on. Bits 13 to 15 are
+unassigned and must be `0`. The server rejects flags with any of them set.
 
 Each bit corresponds to a field of the `ForecastVars` struct in
 `src/models.rs`. Bit 0 is the least significant bit.
 
 | Bit | Value (hex) | `ForecastVars` field | Meaning when set |
 |---|---|---|---|
-| 0 | `001` | `track_alerts` | Track this location and send new NWS alerts for it |
-| 1 | `002` | `no_forecast` | Do not include a weather forecast in the reply |
-| 2 | `004` | `track_avy` | Create an avalanche danger tracker for this location |
-| 3 | `008` | `forecast_properties.elevation` | Include elevation |
-| 4 | `010` | `forecast_properties.wet_bulb_globe_temperature` | Include wet bulb globe temperature |
-| 5 | `020` | `forecast_properties.heat_risk` | Include heat risk |
-| 6 | `040` | `forecast_properties.relative_humidity` | Include relative humidity |
-| 7 | `080` | `forecast_properties.visibility` | Include visibility |
-| 8 | `100` | `forecast_properties.ceiling_height` | Include ceiling height |
-| 9 | `200` | `forecast_properties.pressure` | Include pressure |
-| 10 | `400` | `forecast_properties.snow_level` | Include snow level |
-| 11 | `800` | `forecast_properties.wind_gust` | Include wind gust |
+| 0 | `0001` | `track_alerts` | Track this location and send new NWS alerts for it |
+| 1 | `0002` | `no_forecast` | Do not include a weather forecast in the reply |
+| 2 | `0004` | `track_avy` | Create an avalanche danger tracker for this location |
+| 3 | `0008` | `forecast_properties.elevation` | Include elevation |
+| 4 | `0010` | `forecast_properties.wet_bulb_globe_temperature` | Include wet bulb globe temperature |
+| 5 | `0020` | `forecast_properties.heat_risk` | Include heat risk |
+| 6 | `0040` | `forecast_properties.relative_humidity` | Include relative humidity |
+| 7 | `0080` | `forecast_properties.visibility` | Include visibility |
+| 8 | `0100` | `forecast_properties.ceiling_height` | Include ceiling height |
+| 9 | `0200` | `forecast_properties.pressure` | Include pressure |
+| 10 | `0400` | `forecast_properties.snow_level` | Include snow level |
+| 11 | `0800` | `forecast_properties.wind_gust` | Include wind gust |
+| 12 | `1000` | `brief` | Send the forecast in abbreviated form |
 
 To build the flags field, add (bitwise OR) the values of every option that is
-on, then write the result as exactly 3 hex digits, padding with leading zeros.
+on, then write the result as exactly 4 hex digits, padding with leading zeros.
 Apps should send uppercase hex digits. The server also accepts lowercase.
 
 ```kotlin
 // Kotlin
-val flags = String.format(Locale.US, "%03X", bits)
+val flags = String.format(Locale.US, "%04X", bits)
 ```
 
 ```swift
 // Swift
-let flags = String(format: "%03X", bits)
+let flags = String(format: "%04X", bits)
 ```
 
 ### Tracker duration
@@ -100,11 +102,12 @@ stays active. The maximum is `168` (one week).
 
 | Request | Flags | Message |
 |---|---|---|
-| Forecast only, no optional fields | `000` | `TA1 44.0512 -123.0921 000 0` |
-| Track alerts for 24 hours, no forecast | `001` + `002` = `003` | `TA1 44.0512 -123.0921 003 24` |
-| Track alerts and avalanche danger for 72 hours, relative humidity, wind gust | `001` + `004` + `040` + `800` = `845` | `TA1 44.0512 -123.0921 845 72` |
-| Track alerts for one week, visibility, snow level, wind gust | `001` + `080` + `400` + `800` = `C81` | `TA1 39.1968 -120.2354 C81 168` |
-| Every option on, trackers for 24 hours | `FFF` | `TA1 44.0512 -123.0921 FFF 24` |
+| Forecast only, no optional fields | `0000` | `TA1 44.0512 -123.0921 0000 0` |
+| Brief forecast only | `1000` | `TA1 44.0512 -123.0921 1000 0` |
+| Track alerts for 24 hours, no forecast | `0001` + `0002` = `0003` | `TA1 44.0512 -123.0921 0003 24` |
+| Track alerts and avalanche danger for 72 hours, brief forecast, relative humidity, wind gust | `0001` + `0004` + `0040` + `0800` + `1000` = `1845` | `TA1 44.0512 -123.0921 1845 72` |
+| Track alerts for one week, visibility, snow level, wind gust | `0001` + `0080` + `0400` + `0800` = `0C81` | `TA1 39.1968 -120.2354 0C81 168` |
+| Every option on, trackers for 24 hours | `1FFF` | `TA1 44.0512 -123.0921 1FFF 24` |
 
 ## Character set
 
@@ -124,7 +127,8 @@ allows 70 characters per segment.
 - A message with an unsupported version number gets a reply asking the user to
   update the app.
 - A message with the right prefix but an invalid field (a coordinate out of
-  range, too many decimal places, flags that are not exactly 3 hex digits, or
+  range, too many decimal places, flags that are not exactly 4 hex digits
+  or set an unassigned bit, or
   a tracker duration that is out of range or `0` with a tracker flag set) gets
   a reply naming the field that could not be read.
 
@@ -134,12 +138,12 @@ As a regular expression, a valid version 1 message (after trimming whitespace
 and ignoring case) is:
 
 ```
-^TA1 +(-?\d{1,2}(\.\d{1,4})?) +(-?\d{1,3}(\.\d{1,4})?) +([0-9A-F]{3}) +(\d{1,3})$
+^TA1 +(-?\d{1,2}(\.\d{1,4})?) +(-?\d{1,3}(\.\d{1,4})?) +([0-9A-F]{4}) +(\d{1,3})$
 ```
 
 The pattern checks the shape of the message only. The server also checks that
-the latitude is within ±90, the longitude within ±180, and the tracker
-duration within the rules above.
+the latitude is within ±90, the longitude within ±180, that no unassigned flag
+bit is set, and that the tracker duration follows the rules above.
 
 ## Sending from the apps
 
@@ -158,8 +162,9 @@ Older app versions stay installed after a release, so the server must keep
 accepting every format version that apps in use still send.
 
 - Any change to the fields, their order, or the meaning of a flag bit requires
-  a new version number (`TA2`). All 12 flag bits are in use, so adding an
-  option also requires a new version.
+  a new version number (`TA2`). Assigning one of the unassigned bits 13 to 15
+  to a new option also requires a new version, because servers that do not
+  know the bit reject it.
 - Keep the bit table in this document in sync with `ForecastVars` and
   `ForecastProperties` in `src/models.rs`. Adding, removing, or reordering a
   field there does not change the wire format by itself, but the parser's

@@ -19,6 +19,8 @@ use crate::models::{Alert, AvyHashMap, AvyProperties, Elevation, FloatVec, Forec
 const SUPPORTED_VERSION: &str = "1";
 // one week
 const MAX_TRACKER_DURATION: u32 = 168;
+// bits 0 to 12 of the flags field are assigned
+const USED_FLAG_BITS: u16 = 0x1FFF;
 
 #[derive(Debug, Clone)]
 pub struct SmsRequest
@@ -158,14 +160,20 @@ fn parse_tracker_duration(value: &str, creates_tracker: bool) -> Option<u32>
     Some(hours)
 }
 
-// flags are exactly 3 hex digits, one bit per ForecastVars field
+// flags are exactly 4 hex digits, one bit per ForecastVars field
 fn parse_flags(value: &str) -> Option<ForecastVars>
 {
-    if value.len() != 3 || !value.bytes().all(|b| b.is_ascii_hexdigit())
+    if value.len() != 4 || !value.bytes().all(|b| b.is_ascii_hexdigit())
     {
         return None;
     }
     let bits = u16::from_str_radix(value, 16).ok()?;
+    // unassigned bits are rejected, so an app built for a later
+    // version of the bit table is not silently misread
+    if bits & !USED_FLAG_BITS != 0
+    {
+        return None;
+    }
     let bit = |n: u16| bits & (1 << n) != 0;
 
     // bit order must match the table in docs/sms-format.md
@@ -174,6 +182,7 @@ fn parse_flags(value: &str) -> Option<ForecastVars>
         track_alerts: bit(0),
         no_forecast: bit(1),
         track_avy: bit(2),
+        brief: bit(12),
         forecast_properties: ForecastProperties
         {
             elevation: bit(3),
@@ -312,6 +321,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         let ForecastResponse { point, forecast, alerts: active_alerts } =
             nws::get_forecast(lat, lon, &alerts).await
             .map_err(|e| nws_error("get_forecast", lat, lon, e, APIError::ForecastError))?;
+        // TODO: send the abbreviated forecast when forecast_vars.brief is set
         let forecast = RequestedForecast::from_properties(
             forecast.properties, &forecast_vars.forecast_properties);
         (point, Some(forecast), active_alerts)
