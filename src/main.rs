@@ -150,6 +150,7 @@ async fn new_forecast(State(db): State<DB>) -> Response
         avy: None,
         avy_id: None,
         time_added: chrono::Utc::now(),
+        valid_duration: 0,
     };
     if let Err(e) = add_alert_tracker(user_point, &db).await
     {

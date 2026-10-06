@@ -20,6 +20,7 @@ pub struct UserPoint
    pub avy_id: Option<String>,
    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
    pub time_added: DateTime<Utc>,
+   pub valid_duration: u32,
 }                          
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

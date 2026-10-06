@@ -11,14 +11,15 @@ Current version: **1**
 
 ## Message layout
 
-A request is one line made up of four fields separated by single spaces:
+A request is one line made up of five fields separated by single spaces:
 
 ```
-TA1 44.0512 -123.0921 845
-│   │       │         └─ flags      which options are turned on (3 hex digits)
-│   │       └─────────── longitude  decimal degrees
-│   └─────────────────── latitude   decimal degrees
-└─────────────────────── prefix     "TA" followed by the format version
+TA1 44.0512 -123.0921 845 24
+│   │       │         │   └─ duration   hours a created tracker stays active
+│   │       │         └───── flags      which options are turned on (3 hex digits)
+│   │       └─────────────── longitude  decimal degrees
+│   └─────────────────────── latitude   decimal degrees
+└─────────────────────────── prefix     "TA" followed by the format version
 ```
 
 | Field | Format | Example |
@@ -27,8 +28,9 @@ TA1 44.0512 -123.0921 845
 | Latitude | Decimal degrees from `-90` to `90`, at most 4 decimal places | `44.0512` |
 | Longitude | Decimal degrees from `-180` to `180`, at most 4 decimal places | `-123.0921` |
 | Flags | Exactly 3 hexadecimal digits (`0`–`9`, `A`–`F`) | `845` |
+| Tracker duration | Whole number of hours from `0` to `168`, 1 to 3 digits | `24` |
 
-The longest possible message, `TA1 -90.0000 -180.0000 FFF`, is 26 characters.
+The longest possible message, `TA1 -90.0000 -180.0000 FFF 168`, is 30 characters.
 
 The sender's phone number identifies the user, so the message body does not
 include an account or user ID.
@@ -83,15 +85,26 @@ val flags = String.format(Locale.US, "%03X", bits)
 let flags = String(format: "%03X", bits)
 ```
 
+### Tracker duration
+
+The number of hours that an alert or avalanche tracker created by the request
+stays active. The maximum is `168` (one week).
+
+- When `track_alerts` or `track_avy` is set, the duration must be from `1` to
+  `168`. A duration of `0` is rejected.
+- When neither tracker flag is set, the request creates no tracker. Send `0`.
+  The server accepts any value up to `168` and ignores it.
+- Write the number in decimal digits only, with no sign, decimal point, or unit.
+
 ## Examples
 
 | Request | Flags | Message |
 |---|---|---|
-| Forecast only, no optional fields | `000` | `TA1 44.0512 -123.0921 000` |
-| Track alerts, no forecast | `001` + `002` = `003` | `TA1 44.0512 -123.0921 003` |
-| Track alerts, track avalanche danger, relative humidity, wind gust | `001` + `004` + `040` + `800` = `845` | `TA1 44.0512 -123.0921 845` |
-| Track alerts, visibility, snow level, wind gust | `001` + `080` + `400` + `800` = `C81` | `TA1 39.1968 -120.2354 C81` |
-| Every option on | `FFF` | `TA1 44.0512 -123.0921 FFF` |
+| Forecast only, no optional fields | `000` | `TA1 44.0512 -123.0921 000 0` |
+| Track alerts for 24 hours, no forecast | `001` + `002` = `003` | `TA1 44.0512 -123.0921 003 24` |
+| Track alerts and avalanche danger for 72 hours, relative humidity, wind gust | `001` + `004` + `040` + `800` = `845` | `TA1 44.0512 -123.0921 845 72` |
+| Track alerts for one week, visibility, snow level, wind gust | `001` + `080` + `400` + `800` = `C81` | `TA1 39.1968 -120.2354 C81 168` |
+| Every option on, trackers for 24 hours | `FFF` | `TA1 44.0512 -123.0921 FFF 24` |
 
 ## Character set
 
@@ -111,8 +124,9 @@ allows 70 characters per segment.
 - A message with an unsupported version number gets a reply asking the user to
   update the app.
 - A message with the right prefix but an invalid field (a coordinate out of
-  range, too many decimal places, or flags that are not exactly 3 hex digits)
-  gets a reply naming the field that could not be read.
+  range, too many decimal places, flags that are not exactly 3 hex digits, or
+  a tracker duration that is out of range or `0` with a tracker flag set) gets
+  a reply naming the field that could not be read.
 
 The format of the server's reply messages is not yet defined.
 
@@ -120,11 +134,12 @@ As a regular expression, a valid version 1 message (after trimming whitespace
 and ignoring case) is:
 
 ```
-^TA1 +(-?\d{1,2}(\.\d{1,4})?) +(-?\d{1,3}(\.\d{1,4})?) +([0-9A-F]{3})$
+^TA1 +(-?\d{1,2}(\.\d{1,4})?) +(-?\d{1,3}(\.\d{1,4})?) +([0-9A-F]{3}) +(\d{1,3})$
 ```
 
 The pattern checks the shape of the message only. The server also checks that
-the latitude is within ±90 and the longitude within ±180.
+the latitude is within ±90, the longitude within ±180, and the tracker
+duration within the rules above.
 
 ## Sending from the apps
 

@@ -17,12 +17,15 @@ use crate::models::{Alert, AvyHashMap, AvyProperties, Elevation, FloatVec, Forec
     UserPoint};
 
 const SUPPORTED_VERSION: &str = "1";
+// one week
+const MAX_TRACKER_DURATION: u32 = 168;
 
 #[derive(Debug, Clone)]
 pub struct SmsRequest
 {
     pub lat: f32,
     pub lon: f32,
+    pub tracker_duration: u32,
     pub forecast_vars: ForecastVars,
 }
 
@@ -34,7 +37,7 @@ pub enum SmsParseError
     NotARequest,
     #[error("unsupported message format version {0}")]
     UnsupportedVersion(String),
-    #[error("expected 4 fields, found {0}")]
+    #[error("expected 5 fields, found {0}")]
     WrongFieldCount(usize),
     #[error("invalid latitude: {0}")]
     InvalidLatitude(String),
@@ -42,6 +45,8 @@ pub enum SmsParseError
     InvalidLongitude(String),
     #[error("invalid flags: {0}")]
     InvalidFlags(String),
+    #[error("invalid tracker duration: {0}")]
+    InvalidTrackerDuration(String),
 }
 
 impl FromStr for SmsRequest
@@ -65,21 +70,23 @@ impl FromStr for SmsRequest
             return Err(SmsParseError::UnsupportedVersion(version.to_string()));
         }
 
-        let [_, lat, lon, flags] = fields[..]
+        let [_, lat, lon, flags, duration] = fields[..]
         else
         {
             return Err(SmsParseError::WrongFieldCount(fields.len()));
         };
 
-        Ok(SmsRequest
-        {
-            lat: parse_coordinate(lat, 2, 90.0)
-                .ok_or_else(|| SmsParseError::InvalidLatitude(lat.to_string()))?,
-            lon: parse_coordinate(lon, 3, 180.0)
-                .ok_or_else(|| SmsParseError::InvalidLongitude(lon.to_string()))?,
-            forecast_vars: parse_flags(flags)
-                .ok_or_else(|| SmsParseError::InvalidFlags(flags.to_string()))?,
-        })
+        let lat = parse_coordinate(lat, 2, 90.0)
+            .ok_or_else(|| SmsParseError::InvalidLatitude(lat.to_string()))?;
+        let lon = parse_coordinate(lon, 3, 180.0)
+            .ok_or_else(|| SmsParseError::InvalidLongitude(lon.to_string()))?;
+        let forecast_vars = parse_flags(flags)
+            .ok_or_else(|| SmsParseError::InvalidFlags(flags.to_string()))?;
+        let creates_tracker = forecast_vars.track_alerts || forecast_vars.track_avy;
+        let tracker_duration = parse_tracker_duration(duration, creates_tracker)
+            .ok_or_else(|| SmsParseError::InvalidTrackerDuration(duration.to_string()))?;
+
+        Ok(SmsRequest { lat, lon, tracker_duration, forecast_vars })
     }
 }
 
@@ -133,6 +140,22 @@ fn parse_coordinate(value: &str, max_int_digits: usize, limit: f32) -> Option<f3
         return None;
     }
     Some(parsed)
+}
+
+// hours a tracker created by the request stays active, 1 to 3 digits up to
+// MAX_TRACKER_DURATION. 0 means no tracker, so it is rejected when a tracker flag is set
+fn parse_tracker_duration(value: &str, creates_tracker: bool) -> Option<u32>
+{
+    if !(1..=3).contains(&value.len()) || !value.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let hours: u32 = value.parse().ok()?;
+    if hours > MAX_TRACKER_DURATION || (creates_tracker && hours == 0)
+    {
+        return None;
+    }
+    Some(hours)
 }
 
 // flags are exactly 3 hex digits, one bit per ForecastVars field
@@ -262,7 +285,7 @@ impl RequestedForecast
 pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     -> Result<SmsForecastResponse, APIError>
 {
-    let SmsRequest { lat, lon, forecast_vars } = request;
+    let SmsRequest { lat, lon, tracker_duration, forecast_vars } = request;
     let (lat, lon) = (*lat, *lon);
 
     let alerts = match db.alerts_collection.find_one(doc! {}).await
@@ -358,6 +381,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
             avy: if track_avy { avy.clone() } else { None },
             avy_id: if track_avy { avy_id } else { None },
             time_added: chrono::Utc::now(),
+            valid_duration: *tracker_duration,
         };
         if let Err(e) = add_alert_tracker(user_point, db).await
         {

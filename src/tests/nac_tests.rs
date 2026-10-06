@@ -51,6 +51,7 @@ fn make_tracker(avy_id: Option<&str>, avy: Option<AvyProperties>) -> UserPoint
         avy,
         avy_id: avy_id.map(str::to_string),
         time_added: chrono::Utc::now(),
+        valid_duration: 24,
     }
 }
 
