@@ -47,6 +47,7 @@ fn make_point(lat: f64, lon: f64, same_code: &str) -> Point
             grid_y: 0,
             nwr: NWR { same_code: same_code.to_string() },
             astronomical_data: None,
+            time_zone: None,
         },
         id: None,
         geometry: PointGeometry { coordinates: geo::Point::new(lon, lat) },

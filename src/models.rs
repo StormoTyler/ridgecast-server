@@ -2,7 +2,7 @@ use thiserror::Error;
 use geojson;
 use geo;
 use geo_types;
-use chrono::{DateTime, FixedOffset, Utc, format::ParseError};
+use chrono::{DateTime, Duration, FixedOffset, Utc, format::ParseError};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::json;
 use std::collections::HashMap;
@@ -21,6 +21,19 @@ pub struct UserPoint
    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
    pub time_added: DateTime<Utc>,
    pub valid_duration: u32,
+   // when a daily_forecast tracker sends its next forecast, None for other
+   // trackers and once no 6 AM is left before the tracker expires
+   #[serde(default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional")]
+   pub next_daily_forecast: Option<DateTime<Utc>>,
+}
+
+impl UserPoint
+{
+    // the tracker stops valid_duration hours after it was added
+    pub fn expires_at(&self) -> DateTime<Utc>
+    {
+        self.time_added + Duration::hours(self.valid_duration.into())
+    }
 }                          
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -33,6 +46,8 @@ pub struct ForecastVars
     // create an avalanche danger tracker for this location
     pub track_avy: bool,
     pub brief: bool,
+    // create a tracker that sends a forecast at 6 AM local time each day while it is active
+    pub daily_forecast: bool,
     pub forecast_properties: ForecastProperties,
 }
 
@@ -89,7 +104,10 @@ pub struct PointProperties
    pub nwr: NWR,                                                
     // This one is an option                                 
     // because the forecast is still useful without it       
-    pub astronomical_data: Option<AstronomicalData>,             
+    pub astronomical_data: Option<AstronomicalData>,
+    // IANA time zone name such as "America/Los_Angeles", used to send
+    // daily forecasts at local time. an option for the same reason
+    pub time_zone: Option<String>,             
 }                                                            
                                                              
 #[derive(Debug, Serialize, Deserialize, Clone)]              

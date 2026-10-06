@@ -34,6 +34,7 @@ fn make_point(lat: f64, lon: f64) -> Point
             grid_y: 0,
             nwr: NWR { same_code: "000000".to_string() },
             astronomical_data: None,
+            time_zone: None,
         },
         id: None,
         geometry: PointGeometry { coordinates: geo::Point::new(lon, lat) },
@@ -52,6 +53,7 @@ fn make_tracker(avy_id: Option<&str>, avy: Option<AvyProperties>) -> UserPoint
         avy_id: avy_id.map(str::to_string),
         time_added: chrono::Utc::now(),
         valid_duration: 24,
+        next_daily_forecast: None,
     }
 }
 

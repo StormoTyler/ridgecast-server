@@ -29,6 +29,7 @@ mod database;
 use crate::database::DB;
 mod models;
 mod sms;
+mod daily_forecast;
 #[cfg(test)]
 mod tests;
 use crate::models::{UserPoint, Point, ForecastVars, ForecastProperties, PointGeometry, PointProperties,
@@ -151,6 +152,7 @@ async fn new_forecast(State(db): State<DB>) -> Response
         avy_id: None,
         time_added: chrono::Utc::now(),
         valid_duration: 0,
+        next_daily_forecast: None,
     };
     if let Err(e) = add_alert_tracker(user_point, &db).await
     {

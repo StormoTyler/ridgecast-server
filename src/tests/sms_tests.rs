@@ -4,7 +4,7 @@ use crate::sms::{SmsParseError, SmsRequest};
 
 // flags in bit order, written out from the table in docs/sms-format.md
 // so a change to the parser's mapping fails these tests
-fn flags_in_bit_order(vars: &ForecastVars) -> [bool; 13]
+fn flags_in_bit_order(vars: &ForecastVars) -> [bool; 14]
 {
     let p = &vars.forecast_properties;
     [
@@ -21,6 +21,7 @@ fn flags_in_bit_order(vars: &ForecastVars) -> [bool; 13]
         p.snow_level,
         p.wind_gust,
         vars.brief,
+        vars.daily_forecast,
     ]
 }
 
@@ -42,7 +43,7 @@ fn set_bits(request: &SmsRequest) -> Vec<usize>
 #[test]
 fn parses_documented_examples()
 {
-    let cases: [(&str, f32, f32, &[usize]); 7] =
+    let cases: [(&str, f32, f32, &[usize]); 8] =
     [
         ("TA1 44.0512 -123.0921 0000 0", 44.0512, -123.0921, &[]),
         ("TA1 44.0512 -123.0921 0003 24", 44.0512, -123.0921, &[0, 1]),
@@ -50,7 +51,8 @@ fn parses_documented_examples()
         ("TA1 39.1968 -120.2354 0C81 168", 39.1968, -120.2354, &[0, 7, 10, 11]),
         ("TA1 44.0512 -123.0921 0FFF 24", 44.0512, -123.0921, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
         ("TA1 44.0512 -123.0921 1000 0", 44.0512, -123.0921, &[12]),
-        ("TA1 44.0512 -123.0921 1FFF 24", 44.0512, -123.0921, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+        ("TA1 44.0512 -123.0921 2000 24", 44.0512, -123.0921, &[13]),
+        ("TA1 44.0512 -123.0921 3FFF 24", 44.0512, -123.0921, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]),
     ];
 
     for (message, lat, lon, bits) in cases
@@ -65,7 +67,7 @@ fn parses_documented_examples()
 #[test]
 fn each_bit_maps_to_one_field()
 {
-    for n in 0..13
+    for n in 0..14
     {
         let message = format!("TA1 44.0 -123.0 {:04X} 24", 1u16 << n);
         let request = parse(&message).unwrap();
@@ -77,7 +79,7 @@ fn each_bit_maps_to_one_field()
 fn accepts_lenient_input()
 {
     // lowercase prefix and flags
-    assert_eq!(set_bits(&parse("ta1 44.0 -123.0 1fff 24").unwrap()).len(), 13);
+    assert_eq!(set_bits(&parse("ta1 44.0 -123.0 3fff 24").unwrap()).len(), 14);
     // surrounding whitespace and repeated spaces
     let request = parse("  TA1   44.0512  -123.0921 0845  24 \n").unwrap();
     assert_eq!(request.lat, 44.0512);
@@ -145,8 +147,8 @@ fn rejects_invalid_longitude()
 fn rejects_invalid_flags()
 {
     // too short, too long, not hex, signed, split, full-width digits,
-    // and unassigned bits 13 to 15
-    for flags in ["845", "00845", "G845", "-845", "+845", "08 45", "０８４５", "2000", "4000", "8000", "FFFF"]
+    // and unassigned bits 14 and 15
+    for flags in ["845", "00845", "G845", "-845", "+845", "08 45", "０８４５", "4000", "8000", "FFFF"]
     {
         let message = format!("TA1 44.0 -123.0 {flags} 0");
         match parse(&message)
@@ -195,8 +197,8 @@ fn rejects_invalid_tracker_duration()
 #[test]
 fn rejects_zero_duration_with_tracker()
 {
-    // track_alerts, track_avy, and both
-    for flags in ["0001", "0004", "0005", "1FFF"]
+    // track_alerts, track_avy, daily_forecast, and combinations
+    for flags in ["0001", "0004", "2000", "0005", "2002", "3FFF"]
     {
         let message = format!("TA1 44.0 -123.0 {flags} 0");
         assert_eq!(parse(&message).unwrap_err(),

@@ -9,6 +9,7 @@ use serde::Serialize;
 
 // local modules
 use crate::{APIError, add_alert_tracker};
+use crate::daily_forecast;
 use crate::database::DB;
 use crate::handlers::{nac, nws};
 use crate::handlers::nac::NACError;
@@ -19,8 +20,8 @@ use crate::models::{Alert, AvyHashMap, AvyProperties, Elevation, FloatVec, Forec
 const SUPPORTED_VERSION: &str = "1";
 // one week
 const MAX_TRACKER_DURATION: u32 = 168;
-// bits 0 to 12 of the flags field are assigned
-const USED_FLAG_BITS: u16 = 0x1FFF;
+// bits 0 to 13 of the flags field are assigned
+const USED_FLAG_BITS: u16 = 0x3FFF;
 
 #[derive(Debug, Clone)]
 pub struct SmsRequest
@@ -84,7 +85,10 @@ impl FromStr for SmsRequest
             .ok_or_else(|| SmsParseError::InvalidLongitude(lon.to_string()))?;
         let forecast_vars = parse_flags(flags)
             .ok_or_else(|| SmsParseError::InvalidFlags(flags.to_string()))?;
-        let creates_tracker = forecast_vars.track_alerts || forecast_vars.track_avy;
+        // daily_forecast with a duration that ends before the next 6 AM is
+        // prevented by the apps (see docs/sms-format.md), not checked here
+        let creates_tracker = forecast_vars.track_alerts || forecast_vars.track_avy
+            || forecast_vars.daily_forecast;
         let tracker_duration = parse_tracker_duration(duration, creates_tracker)
             .ok_or_else(|| SmsParseError::InvalidTrackerDuration(duration.to_string()))?;
 
@@ -183,6 +187,7 @@ fn parse_flags(value: &str) -> Option<ForecastVars>
         no_forecast: bit(1),
         track_avy: bit(2),
         brief: bit(12),
+        daily_forecast: bit(13),
         forecast_properties: ForecastProperties
         {
             elevation: bit(3),
@@ -247,6 +252,9 @@ pub struct SmsForecastResponse
     // explains a missing avy for a track_avy request whose forecast could not be given
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avy_notice: Option<&'static str>,
+    // explains why a daily_forecast request did not get a daily forecast tracker
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub daily_notice: Option<&'static str>,
 }
 
 impl RequestedForecast
@@ -287,7 +295,7 @@ impl RequestedForecast
 }
 
 // takes an SmsRequest and returns data for the fields flagged as True
-// adds an alerts tracker or avalanche tracker if those fields are True
+// adds an alerts, avalanche, or daily forecast tracker if those fields are True
 // returns the avalanche zone's data at any danger level when track_avy is True,
 // and only at danger level 3 or higher when it is False
 // user is the sender's phone number, which identifies the user
@@ -379,19 +387,47 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     // so its next forecast is reported as new
     let avy_id = avy_id.or(no_forecast_id);
 
-    if forecast_vars.track_alerts || track_avy
+    let time_added = chrono::Utc::now();
+    let expires = time_added + chrono::Duration::hours((*tracker_duration).into());
+    let mut daily_notice = None;
+    // the first daily forecast, None when the request has no daily forecast
+    let next_daily_forecast = if forecast_vars.daily_forecast
     {
-        // one tracker covers both options, its forecast_vars record which are on
+        match daily_forecast::point_time_zone(&point)
+        {
+            // None when the tracker expires before the next 6 AM. the apps do not
+            // send such a request (see docs/sms-format.md)
+            Some(tz) => daily_forecast::next_daily_forecast(tz, time_added, expires),
+            None =>
+            {
+                eprintln!("get_requested_forecast: no usable time zone for {lat},{lon}: {:?}",
+                    point.properties.time_zone);
+                daily_notice = Some("Daily forecasts are not available for this location.");
+                None
+            }
+        }
+    }
+    else
+    {
+        None
+    };
+    // a tracker that would never send a daily forecast does not track it
+    let daily_forecast = next_daily_forecast.is_some();
+
+    if forecast_vars.track_alerts || track_avy || daily_forecast
+    {
+        // one tracker covers every option, its forecast_vars record which are on
         let user_point = UserPoint
         {
             user: user.to_string(),
-            forecast_vars: ForecastVars { track_avy, ..forecast_vars.clone() },
+            forecast_vars: ForecastVars { track_avy, daily_forecast, ..forecast_vars.clone() },
             point: point.clone(),
             // only an avalanche tracker stores its zone
             avy: if track_avy { avy.clone() } else { None },
             avy_id: if track_avy { avy_id } else { None },
-            time_added: chrono::Utc::now(),
+            time_added,
             valid_duration: *tracker_duration,
+            next_daily_forecast,
         };
         if let Err(e) = add_alert_tracker(user_point, db).await
         {
@@ -400,7 +436,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         }
     }
 
-    Ok(SmsForecastResponse { point, forecast, alerts: active_alerts, avy, avy_notice })
+    Ok(SmsForecastResponse { point, forecast, alerts: active_alerts, avy, avy_notice, daily_notice })
 }
 
 // maps an NWS error the same way the route handlers do

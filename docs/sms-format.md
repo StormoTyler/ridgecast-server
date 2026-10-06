@@ -30,7 +30,7 @@ TA1 44.0512 -123.0921 1845 24
 | Flags | Exactly 4 hexadecimal digits (`0`–`9`, `A`–`F`) | `1845` |
 | Tracker duration | Whole number of hours from `0` to `168`, 1 to 3 digits | `24` |
 
-The longest possible message, `TA1 -90.0000 -180.0000 1FFF 168`, is 31 characters.
+The longest possible message, `TA1 -90.0000 -180.0000 3FFF 168`, is 31 characters.
 
 The sender's phone number identifies the user, so the message body does not
 include an account or user ID.
@@ -50,8 +50,8 @@ include an account or user ID.
 
 ### Flags
 
-The flags field packs 13 on/off options into a 16-bit number written as 4
-hexadecimal digits. A bit set to `1` means the option is on. Bits 13 to 15 are
+The flags field packs 14 on/off options into a 16-bit number written as 4
+hexadecimal digits. A bit set to `1` means the option is on. Bits 14 and 15 are
 unassigned and must be `0`. The server rejects flags with any of them set.
 
 Each bit corresponds to a field of the `ForecastVars` struct in
@@ -72,6 +72,7 @@ Each bit corresponds to a field of the `ForecastVars` struct in
 | 10 | `0400` | `forecast_properties.snow_level` | Include snow level |
 | 11 | `0800` | `forecast_properties.wind_gust` | Include wind gust |
 | 12 | `1000` | `brief` | Send the forecast in abbreviated form |
+| 13 | `2000` | `daily_forecast` | Send a forecast for this location every 24 hours while the tracker is active |
 
 To build the flags field, add (bitwise OR) the values of every option that is
 on, then write the result as exactly 4 hex digits, padding with leading zeros.
@@ -89,14 +90,41 @@ let flags = String(format: "%04X", bits)
 
 ### Tracker duration
 
-The number of hours that an alert or avalanche tracker created by the request
-stays active. The maximum is `168` (one week).
+The number of hours that a tracker created by the request stays active. The
+maximum is `168` (one week). The tracker flags are `track_alerts`, `track_avy`,
+and `daily_forecast`. A request with several of them set creates one tracker
+that covers all of them.
 
-- When `track_alerts` or `track_avy` is set, the duration must be from `1` to
-  `168`. A duration of `0` is rejected.
-- When neither tracker flag is set, the request creates no tracker. Send `0`.
+- When any tracker flag is set, the duration must be from `1` to `168`. A
+  duration of `0` is rejected.
+- A `daily_forecast` tracker sends a forecast each day at 6 AM while it is
+  active. See [Daily forecast](#daily-forecast).
+- When no tracker flag is set, the request creates no tracker. Send `0`.
   The server accepts any value up to `168` and ignores it.
 - Write the number in decimal digits only, with no sign, decimal point, or unit.
+
+### Daily forecast
+
+A `daily_forecast` tracker sends a forecast at 6:00 AM local time at the
+tracked location. Local time is the location's time zone as reported by the
+NWS points API, not the time zone of the phone that sent the request. A
+forecast is sent at every 6 AM that falls while the tracker is active, so the
+number of daily forecasts depends on both the duration and the time of day the
+request was sent.
+
+`daily_forecast` may be set together with `no_forecast`. The reply to the
+request then has no forecast, and the tracker still sends a forecast each
+morning. This is for a user who wants a recurring forecast but not one right
+now.
+
+The server does not reject a `daily_forecast` request with a tracker duration
+that ends before the next 6 AM at the location. It answers the rest of the
+request but does not create a daily forecast tracker, since it would never send
+a forecast. **The apps' request generator must not produce this request.**
+
+If NWS does not report a time zone for the location, the server answers the
+rest of the request, does not create a daily forecast tracker, and says so in
+the reply.
 
 ## Examples
 
@@ -107,7 +135,8 @@ stays active. The maximum is `168` (one week).
 | Track alerts for 24 hours, no forecast | `0001` + `0002` = `0003` | `TA1 44.0512 -123.0921 0003 24` |
 | Track alerts and avalanche danger for 72 hours, brief forecast, relative humidity, wind gust | `0001` + `0004` + `0040` + `0800` + `1000` = `1845` | `TA1 44.0512 -123.0921 1845 72` |
 | Track alerts for one week, visibility, snow level, wind gust | `0001` + `0080` + `0400` + `0800` = `0C81` | `TA1 39.1968 -120.2354 0C81 168` |
-| Every option on, trackers for 24 hours | `1FFF` | `TA1 44.0512 -123.0921 1FFF 24` |
+| Daily forecast for 72 hours, brief | `2000` + `1000` = `3000` | `TA1 44.0512 -123.0921 3000 72` |
+| Every option on, trackers for 24 hours | `3FFF` | `TA1 44.0512 -123.0921 3FFF 24` |
 
 ## Character set
 
@@ -131,6 +160,9 @@ allows 70 characters per segment.
   or set an unassigned bit, or
   a tracker duration that is out of range or `0` with a tracker flag set) gets
   a reply naming the field that could not be read.
+- The server does not check whether a `daily_forecast` tracker's duration
+  includes a 6 AM (see [Daily forecast](#daily-forecast)). The apps are
+  responsible for not sending a request that would never send a forecast.
 
 The format of the server's reply messages is not yet defined.
 
@@ -162,7 +194,7 @@ Older app versions stay installed after a release, so the server must keep
 accepting every format version that apps in use still send.
 
 - Any change to the fields, their order, or the meaning of a flag bit requires
-  a new version number (`TA2`). Assigning one of the unassigned bits 13 to 15
+  a new version number (`TA2`). Assigning one of the unassigned bits 14 and 15
   to a new option also requires a new version, because servers that do not
   know the bit reject it.
 - Keep the bit table in this document in sync with `ForecastVars` and

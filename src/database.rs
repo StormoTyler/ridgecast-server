@@ -1,4 +1,4 @@
-use mongodb::{bson::doc, error::Result, options::ClientOptions, Client, Collection};
+use mongodb::{bson::doc, error::Result, options::ClientOptions, Client, Collection, IndexModel};
 
 // local modules
 use crate::models::{AlertsSorted, UserPoint, AvyHashMap};
@@ -29,6 +29,12 @@ impl DB {
         let alerts_collection = database.collection::<AlertsSorted>("alerts");
         let points_collection = database.collection::<UserPoint>("points");
         let avy_collection = database.collection::<AvyHashMap>("avy");
+
+        // the scheduler finds due daily forecasts with next_daily_forecast <= now.
+        // creating an index that already exists does nothing
+        points_collection
+            .create_index(IndexModel::builder().keys(doc! { "next_daily_forecast": 1 }).build())
+            .await?;
 
         println!("Pinged your database. Successfully connected to MongoDB!");
 
