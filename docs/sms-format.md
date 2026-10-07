@@ -11,15 +11,16 @@ Current version: **1**
 
 ## Message layout
 
-A request is one line made up of five fields separated by single spaces:
+A request is one line made up of six fields separated by single spaces:
 
 ```
-TA1 44.0512 -123.0921 1845 24
-│   │       │         │    └─ duration   hours a created tracker stays active
-│   │       │         └────── flags      which options are turned on (4 hex digits)
-│   │       └──────────────── longitude  decimal degrees
-│   └──────────────────────── latitude   decimal degrees
-└──────────────────────────── prefix     "TA" followed by the format version
+TA1 44.0512 -123.0921 1845 24 3
+│   │       │         │    │  └─ length     days of forecast in the reply
+│   │       │         │    └──── duration   hours a created tracker stays active
+│   │       │         └───────── flags      which options are turned on (4 hex digits)
+│   │       └─────────────────── longitude  decimal degrees
+│   └─────────────────────────── latitude   decimal degrees
+└─────────────────────────────── prefix     "TA" followed by the format version
 ```
 
 | Field | Format | Example |
@@ -29,8 +30,10 @@ TA1 44.0512 -123.0921 1845 24
 | Longitude | Decimal degrees from `-180` to `180`, at most 4 decimal places | `-123.0921` |
 | Flags | Exactly 4 hexadecimal digits (`0`–`9`, `A`–`F`) | `1845` |
 | Tracker duration | Whole number of hours from `0` to `168`, 1 to 3 digits | `24` |
+| Forecast length | One digit from `1` to `7` | `3` |
 
-The longest possible message, `TA1 -90.0000 -180.0000 3FFF 168`, is 31 characters.
+The longest possible message, `TA1 -90.0000 -180.0000 3FFF 168 7`, is 33
+characters.
 
 The sender's phone number identifies the user, so the message body does not
 include an account or user ID.
@@ -103,6 +106,21 @@ that covers all of them.
   The server accepts any value up to `168` and ignores it.
 - Write the number in decimal digits only, with no sign, decimal point, or unit.
 
+### Forecast length
+
+The number of days of forecast in the reply to the request, counting today as
+the first day. Days are local days at the forecast location, in the time zone
+that NWS reports for it, so a 1-day forecast ends at the location's next
+midnight.
+
+- One digit from `1` to `7`. `0`, `8`, `9`, and leading zeros are rejected.
+- The field is required. A message without it is rejected.
+- It applies only to the forecast in the reply to the request. Daily
+  forecasts from a `daily_forecast` tracker have their own length (see
+  [sms-reply-format.md](sms-reply-format.md)).
+- With `no_forecast` set, the reply has no forecast. The field must still be
+  sent, and the server ignores its value. Send `1`.
+
 ### Daily forecast
 
 A `daily_forecast` tracker sends a forecast at 6:00 AM local time at the
@@ -130,13 +148,14 @@ the reply.
 
 | Request | Flags | Message |
 |---|---|---|
-| Forecast only, no optional fields | `0000` | `TA1 44.0512 -123.0921 0000 0` |
-| Brief forecast only | `1000` | `TA1 44.0512 -123.0921 1000 0` |
-| Track alerts for 24 hours, no forecast | `0001` + `0002` = `0003` | `TA1 44.0512 -123.0921 0003 24` |
-| Track alerts and avalanche danger for 72 hours, brief forecast, relative humidity, wind gust | `0001` + `0004` + `0040` + `0800` + `1000` = `1845` | `TA1 44.0512 -123.0921 1845 72` |
-| Track alerts for one week, visibility, snow level, wind gust | `0001` + `0080` + `0400` + `0800` = `0C81` | `TA1 39.1968 -120.2354 0C81 168` |
-| Daily forecast for 72 hours, brief | `2000` + `1000` = `3000` | `TA1 44.0512 -123.0921 3000 72` |
-| Every option on, trackers for 24 hours | `3FFF` | `TA1 44.0512 -123.0921 3FFF 24` |
+| 1-day forecast only, no optional fields | `0000` | `TA1 44.0512 -123.0921 0000 0 1` |
+| 5-day forecast, no optional fields | `0000` | `TA1 44.0512 -123.0921 0000 0 5` |
+| Brief 2-day forecast only | `1000` | `TA1 44.0512 -123.0921 1000 0 2` |
+| Track alerts for 24 hours, no forecast | `0001` + `0002` = `0003` | `TA1 44.0512 -123.0921 0003 24 1` |
+| Track alerts and avalanche danger for 72 hours, brief 2-day forecast, relative humidity, wind gust | `0001` + `0004` + `0040` + `0800` + `1000` = `1845` | `TA1 44.0512 -123.0921 1845 72 2` |
+| Track alerts for one week, 3-day forecast, visibility, snow level, wind gust | `0001` + `0080` + `0400` + `0800` = `0C81` | `TA1 39.1968 -120.2354 0C81 168 3` |
+| Daily forecast for 72 hours, brief 1-day forecast | `2000` + `1000` = `3000` | `TA1 44.0512 -123.0921 3000 72 1` |
+| Every option on, trackers for 24 hours, 7-day forecast | `3FFF` | `TA1 44.0512 -123.0921 3FFF 24 7` |
 
 ## Character set
 
@@ -158,24 +177,26 @@ allows 70 characters per segment.
 - A message with the right prefix but an invalid field (a coordinate out of
   range, too many decimal places, flags that are not exactly 4 hex digits
   or set an unassigned bit, or
-  a tracker duration that is out of range or `0` with a tracker flag set) gets
-  a reply naming the field that could not be read.
+  a tracker duration that is out of range or `0` with a tracker flag set, or
+  a forecast length that is not one digit from `1` to `7`) gets a reply
+  naming the field that could not be read.
 - The server does not check whether a `daily_forecast` tracker's duration
   includes a 6 AM (see [Daily forecast](#daily-forecast)). The apps are
   responsible for not sending a request that would never send a forecast.
 
-The format of the server's reply messages is not yet defined.
+The server's reply messages are defined in [sms-reply-format.md](sms-reply-format.md) (draft).
 
 As a regular expression, a valid version 1 message (after trimming whitespace
 and ignoring case) is:
 
 ```
-^TA1 +(-?\d{1,2}(\.\d{1,4})?) +(-?\d{1,3}(\.\d{1,4})?) +([0-9A-F]{4}) +(\d{1,3})$
+^TA1 +(-?\d{1,2}(\.\d{1,4})?) +(-?\d{1,3}(\.\d{1,4})?) +([0-9A-F]{4}) +(\d{1,3}) +([1-7])$
 ```
 
 The pattern checks the shape of the message only. The server also checks that
 the latitude is within ±90, the longitude within ±180, that no unassigned flag
-bit is set, and that the tracker duration follows the rules above.
+bit is set, and that the tracker duration follows the rules above. The
+pattern checks the forecast length completely.
 
 ## Sending from the apps
 

@@ -223,7 +223,7 @@ Limits per response:
 
 | Kind | Messages | Forecast days |
 |---|---|---|
-| Reply | at most 9 | up to 7, dropping the last days to stay within 9 messages |
+| Reply | at most 9 | the request's forecast length (1 to 7), dropping the last days to stay within 9 messages |
 | Daily forecast | at most 3 | today and the next 2 days |
 | Alert and avalanche notifications | at most 2 | none |
 | Tracker ended, error, help | exactly 1 | none |
@@ -232,8 +232,10 @@ A forecast day takes about 60 to 120 characters, depending on the weather and
 the optional fields requested. A day with rain or snow and several optional
 fields fills a message on its own, and two quiet days share one. The 7-day
 reply in the [examples](#examples) takes 7 messages, including the first
-message with the alert, avalanche, and tracker lines. Users who pay per
-message, such as Garmin inReach users, should use `brief`.
+message with the alert, avalanche, and tracker lines, so a 7-day reply takes
+about 5 to 8 messages. A request asks for fewer days with its forecast length
+field (see [sms-format.md](sms-format.md)). Users who pay per message, such as
+Garmin inReach users, should use `brief`.
 
 ## Brief format
 
@@ -242,8 +244,8 @@ compact format with short labels. It contains:
 
 1. Alerts.
 2. The avalanche line without the zone name.
-3. Today's and tomorrow's forecast, with only the three always-present tokens
-   and `P`, `R`, and `S`.
+3. The request's forecast length in days, starting with today, with only the
+   three always-present tokens and `P`, `R`, and `S`.
 
 There is no elevation, tracker, or notice line. If the message does not fit in
 140 characters, forecast days are dropped first, then the alert lines are
@@ -329,7 +331,7 @@ TrailAlert: send requests from the TrailAlert app. Typed format: TA1 lat lon fla
 ## Examples
 
 A request for a 72-hour alert and avalanche tracker, relative humidity, and
-wind gust (`TA1 45.3735 -121.6959 0845 72`), answered with a 7-day forecast in
+wind gust, with a 7-day forecast (`TA1 45.3735 -121.6959 0845 72 7`), answered in
 7 messages:
 
 ```
@@ -370,7 +372,8 @@ Sun: high 42F, low 29F. Wind SE 8mph, gusts 15. Precip 30%. Humidity 50-85%
 Mon: high 45F, low 31F. Wind S 10mph, gusts 18. Precip 40%, 0.10in. Humidity 55-90%
 ```
 
-The same request with `brief` (`TA1 45.3735 -121.6959 1845 72`):
+The same request with `brief` and a 2-day forecast
+(`TA1 45.3735 -121.6959 1845 72 2`):
 
 ```
 (1/1)
@@ -442,6 +445,3 @@ change.
   not show when during the day rain or wind will start. Splitting days into
   day and night, as NWS text forecasts do, would show more and use about twice
   the space.
-- **Message count.** A full 7-day reply takes about 5 to 8 messages, 7 in the
-  example. If that is too many, the reply could cover fewer days, with the
-  rest available through `daily_forecast`.

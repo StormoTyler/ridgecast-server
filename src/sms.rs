@@ -4,6 +4,8 @@
 use std::str::FromStr;
 use thiserror::Error;
 
+use chrono::{DateTime, Days, TimeZone, Utc};
+
 use mongodb::bson::doc;
 use serde::Serialize;
 
@@ -22,13 +24,20 @@ const SUPPORTED_VERSION: &str = "1";
 const MAX_TRACKER_DURATION: u32 = 168;
 // bits 0 to 13 of the flags field are assigned
 const USED_FLAG_BITS: u16 = 0x3FFF;
+// longest forecast in the reply to a request, in days
+const MAX_FORECAST_LENGTH: u32 = 7;
 
 #[derive(Debug, Clone)]
 pub struct SmsRequest
 {
     pub lat: f32,
     pub lon: f32,
+    // time in hours that trackers created by this request remain active
     pub tracker_duration: u32,
+    // number of days forecast that is received on initial request
+    // 1 to 7, always sent by the apps
+    pub forecast_length: u32,
+    // which optional forecast fields are used for a given forecast
     pub forecast_vars: ForecastVars,
 }
 
@@ -40,7 +49,7 @@ pub enum SmsParseError
     NotARequest,
     #[error("unsupported message format version {0}")]
     UnsupportedVersion(String),
-    #[error("expected 5 fields, found {0}")]
+    #[error("expected 6 fields, found {0}")]
     WrongFieldCount(usize),
     #[error("invalid latitude: {0}")]
     InvalidLatitude(String),
@@ -50,6 +59,8 @@ pub enum SmsParseError
     InvalidFlags(String),
     #[error("invalid tracker duration: {0}")]
     InvalidTrackerDuration(String),
+    #[error("invalid forecast length: {0}")]
+    InvalidForecastLength(String),
 }
 
 impl FromStr for SmsRequest
@@ -73,7 +84,7 @@ impl FromStr for SmsRequest
             return Err(SmsParseError::UnsupportedVersion(version.to_string()));
         }
 
-        let [_, lat, lon, flags, duration] = fields[..]
+        let [_, lat, lon, flags, duration, length] = fields[..]
         else
         {
             return Err(SmsParseError::WrongFieldCount(fields.len()));
@@ -91,8 +102,10 @@ impl FromStr for SmsRequest
             || forecast_vars.daily_forecast;
         let tracker_duration = parse_tracker_duration(duration, creates_tracker)
             .ok_or_else(|| SmsParseError::InvalidTrackerDuration(duration.to_string()))?;
+        let forecast_length = parse_forecast_length(length)
+            .ok_or_else(|| SmsParseError::InvalidForecastLength(length.to_string()))?;
 
-        Ok(SmsRequest { lat, lon, tracker_duration, forecast_vars })
+        Ok(SmsRequest { lat, lon, tracker_duration, forecast_length, forecast_vars })
     }
 }
 
@@ -162,6 +175,17 @@ fn parse_tracker_duration(value: &str, creates_tracker: bool) -> Option<u32>
         return None;
     }
     Some(hours)
+}
+
+// days of forecast in the reply, one digit from 1 to MAX_FORECAST_LENGTH
+fn parse_forecast_length(value: &str) -> Option<u32>
+{
+    if value.len() != 1
+    {
+        return None;
+    }
+    let days: u32 = value.parse().ok()?;
+    (1..=MAX_FORECAST_LENGTH).contains(&days).then_some(days)
 }
 
 // flags are exactly 4 hex digits, one bit per ForecastVars field
@@ -259,39 +283,86 @@ pub struct SmsForecastResponse
 
 impl RequestedForecast
 {
-    fn from_properties(properties: Properties, flags: &ForecastProperties) -> Self
+    // end is when the last requested forecast day ends, see forecast_end
+    fn from_properties(properties: Properties, flags: &ForecastProperties, end: DateTime<Utc>)
+        -> Self
     {
         // keeps an optional field only when its flag is set
         fn keep<T>(flag: bool, value: T) -> Option<T>
         {
             flag.then_some(value)
         }
+        let floats = |series| trim_floats(series, end);
+        let ints = |series| trim_ints(series, end);
 
         RequestedForecast
         {
-            temperature: properties.temperature,
-            max_temperature: properties.max_temperature,
-            min_temperature: properties.min_temperature,
-            apparent_temperature: properties.apparent_temperature,
-            quantitative_precipitation: properties.quantitative_precipitation,
-            probability_of_precipitation: properties.probability_of_precipitation,
-            snowfall_amount: properties.snowfall_amount,
-            ice_accumulation: properties.ice_accumulation,
-            wind_direction: properties.wind_direction,
-            wind_speed: properties.wind_speed,
+            temperature: floats(properties.temperature),
+            max_temperature: floats(properties.max_temperature),
+            min_temperature: floats(properties.min_temperature),
+            apparent_temperature: floats(properties.apparent_temperature),
+            quantitative_precipitation: floats(properties.quantitative_precipitation),
+            probability_of_precipitation: ints(properties.probability_of_precipitation),
+            snowfall_amount: floats(properties.snowfall_amount),
+            ice_accumulation: floats(properties.ice_accumulation),
+            wind_direction: ints(properties.wind_direction),
+            wind_speed: floats(properties.wind_speed),
             elevation: keep(flags.elevation, properties.elevation),
             // these are already optional because NWS leaves them out for some areas
             wet_bulb_globe_temperature: properties.wet_bulb_globe_temperature
-                .filter(|_| flags.wet_bulb_globe_temperature),
-            heat_risk: properties.heat_risk.filter(|_| flags.heat_risk),
-            relative_humidity: keep(flags.relative_humidity, properties.relative_humidity),
-            visibility: keep(flags.visibility, properties.visibility),
-            ceiling_height: properties.ceiling_height.filter(|_| flags.ceiling_height),
-            pressure: keep(flags.pressure, properties.pressure),
-            snow_level: keep(flags.snow_level, properties.snow_level),
-            wind_gust: keep(flags.wind_gust, properties.wind_gust),
+                .filter(|_| flags.wet_bulb_globe_temperature).map(floats),
+            heat_risk: properties.heat_risk.filter(|_| flags.heat_risk).map(ints),
+            relative_humidity: keep(flags.relative_humidity, properties.relative_humidity)
+                .map(ints),
+            visibility: keep(flags.visibility, properties.visibility).map(floats),
+            ceiling_height: properties.ceiling_height.filter(|_| flags.ceiling_height)
+                .map(floats),
+            pressure: keep(flags.pressure, properties.pressure).map(floats),
+            snow_level: keep(flags.snow_level, properties.snow_level).map(floats),
+            wind_gust: keep(flags.wind_gust, properties.wind_gust).map(floats),
         }
     }
+}
+
+// when the last of `days` forecast days ends: local midnight after the last day,
+// counting today as the first day
+pub(crate) fn forecast_end<T: TimeZone>(tz: &T, now: DateTime<Utc>, days: u32) -> DateTime<Utc>
+{
+    let fallback = now + chrono::Duration::days(days.into());
+    let Some(last_midnight) = now.with_timezone(tz).date_naive()
+        .checked_add_days(Days::new(days.into()))
+        .and_then(|date| date.and_hms_opt(0, 0, 0))
+    else
+    {
+        return fallback;
+    };
+    // earliest() is None only where a daylight saving change skips midnight,
+    // which does not happen in US time zones
+    tz.from_local_datetime(&last_midnight).earliest()
+        .map_or(fallback, |end| end.with_timezone(&Utc))
+}
+
+// true when an NWS validTime interval such as "2026-10-06T13:00:00+00:00/PT1H"
+// starts before end. a value without a readable time is dropped
+fn starts_before(valid_time: &Option<String>, end: DateTime<Utc>) -> bool
+{
+    valid_time.as_deref()
+        .and_then(|time| time.split('/').next())
+        .and_then(|start| DateTime::parse_from_rfc3339(start).ok())
+        .is_some_and(|start| start < end)
+}
+
+// keep the values of a forecast series that start before end
+pub(crate) fn trim_floats(mut series: FloatVec, end: DateTime<Utc>) -> FloatVec
+{
+    series.values.retain(|value| starts_before(&value.valid_time, end));
+    series
+}
+
+pub(crate) fn trim_ints(mut series: IntVec, end: DateTime<Utc>) -> IntVec
+{
+    series.values.retain(|value| starts_before(&value.valid_time, end));
+    series
 }
 
 // takes an SmsRequest and returns data for the fields flagged as True
@@ -302,7 +373,7 @@ impl RequestedForecast
 pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     -> Result<SmsForecastResponse, APIError>
 {
-    let SmsRequest { lat, lon, tracker_duration, forecast_vars } = request;
+    let SmsRequest { lat, lon, tracker_duration, forecast_length, forecast_vars } = request;
     let (lat, lon) = (*lat, *lon);
 
     let alerts = match db.alerts_collection.find_one(doc! {}).await
@@ -329,9 +400,17 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         let ForecastResponse { point, forecast, alerts: active_alerts } =
             nws::get_forecast(lat, lon, &alerts).await
             .map_err(|e| nws_error("get_forecast", lat, lon, e, APIError::ForecastError))?;
+        // forecast days are local days at the location. NWS reports a time zone for
+        // every point it covers, so UTC days are only a fallback
+        let now = Utc::now();
+        let end = match daily_forecast::point_time_zone(&point)
+        {
+            Some(tz) => forecast_end(&tz, now, *forecast_length),
+            None => forecast_end(&Utc, now, *forecast_length),
+        };
         // TODO: send the abbreviated forecast when forecast_vars.brief is set
         let forecast = RequestedForecast::from_properties(
-            forecast.properties, &forecast_vars.forecast_properties);
+            forecast.properties, &forecast_vars.forecast_properties, end);
         (point, Some(forecast), active_alerts)
     };
 
