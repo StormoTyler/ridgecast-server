@@ -1,0 +1,112 @@
+{
+    "@context": [
+        "https://geojson.org/geojson-ld/geojson-context.jsonld",
+        {
+            "@version": "1.1",
+            "wx": "https://api.weather.gov/ontology#",
+            "s": "https://schema.org/",
+            "geo": "http://www.opengis.net/ont/geosparql#",
+            "unit": "http://codes.wmo.int/common/unit/",
+            "@vocab": "https://api.weather.gov/ontology#",
+            "geometry": {
+                "@id": "s:GeoCoordinates",
+                "@type": "geo:wktLiteral"
+            },
+            "city": "s:addressLocality",
+            "state": "s:addressRegion",
+            "distance": {
+                "@id": "s:Distance",
+                "@type": "s:QuantitativeValue"
+            },
+            "bearing": {
+                "@type": "s:QuantitativeValue"
+            },
+            "value": {
+                "@id": "s:value"
+            },
+            "unitCode": {
+                "@id": "s:unitCode",
+                "@type": "@id"
+            },
+            "forecastOffice": {
+                "@type": "@id"
+            },
+            "forecastGridData": {
+                "@type": "@id"
+            },
+            "publicZone": {
+                "@type": "@id"
+            },
+            "county": {
+                "@type": "@id"
+            }
+        }
+    ],
+    "id": "https://api.weather.gov/points/44,-123",
+    "type": "Feature",
+    "geometry": {
+        "type": "Point",
+        "coordinates": [
+            -123,
+            44
+        ]
+    },
+    "properties": {
+        "@id": "https://api.weather.gov/points/44,-123",
+        "@type": "wx:Point",
+        "cwa": "PQR",
+        "type": "land",
+        "forecastOffice": "https://api.weather.gov/offices/PQR",
+        "gridId": "PQR",
+        "gridX": 88,
+        "gridY": 36,
+        "forecast": "https://api.weather.gov/gridpoints/PQR/88,36/forecast",
+        "forecastHourly": "https://api.weather.gov/gridpoints/PQR/88,36/forecast/hourly",
+        "forecastGridData": "https://api.weather.gov/gridpoints/PQR/88,36",
+        "observationStations": "https://api.weather.gov/gridpoints/PQR/88,36/stations",
+        "relativeLocation": {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    -122.9806518,
+                    44.0536535
+                ]
+            },
+            "properties": {
+                "city": "Springfield",
+                "state": "OR",
+                "distance": {
+                    "unitCode": "wmoUnit:m",
+                    "value": 3394.7320220369
+                },
+                "bearing": {
+                    "unitCode": "wmoUnit:degree_(angle)",
+                    "value": 194
+                }
+            }
+        },
+        "forecastZone": "https://api.weather.gov/zones/forecast/ORZ118",
+        "county": "https://api.weather.gov/zones/county/ORC039",
+        "fireWeatherZone": "https://api.weather.gov/zones/fire/ORZ685",
+        "timeZone": "America/Los_Angeles",
+        "radarStation": "KRTX",
+        "astronomicalData": {
+            "sunrise": "2026-10-06T07:16:03-07:00",
+            "sunset": "2026-10-06T18:43:57-07:00",
+            "transit": "2026-10-06T13:00:00-07:00",
+            "civilTwilightBegin": "2026-10-06T06:47:19-07:00",
+            "civilTwilightEnd": "2026-10-06T19:12:41-07:00",
+            "nauticalTwilightBegin": "2026-10-06T06:13:56-07:00",
+            "nauticalTwilightEnd": "2026-10-06T19:46:04-07:00",
+            "astronomicalTwilightBegin": "2026-10-06T05:40:18-07:00",
+            "astronomicalTwilightEnd": "2026-10-06T20:19:42-07:00"
+        },
+        "nwr": {
+            "transmitter": "KEC42",
+            "sameCode": "041039",
+            "areaBroadcast": "https://api.weather.gov/radio/KEC42/broadcast",
+            "pointBroadcast": "https://api.weather.gov/points/44,-123/radio"
+        }
+    }
+}
