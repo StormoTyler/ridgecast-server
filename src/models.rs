@@ -37,7 +37,7 @@ impl UserPoint
 }                          
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
-// data structure for parsing SMS messages from the TrailAlert
+// data structure for parsing SMS messages from the RidgeCast
 // IOS and Android apps
 pub struct ForecastVars
 {

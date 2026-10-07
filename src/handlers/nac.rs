@@ -22,7 +22,7 @@ const BASE_URL: &str = "https://api.avalanche.org/v2/public/products/map-layer";
 static NAC_CLIENT: Lazy<Client> = Lazy::new(||                        
 {                                                                     
     Client::builder()                                                 
-        .user_agent("User-Agent: (TrailAlert, stormotyler@gmail.com)")
+        .user_agent("User-Agent: (RidgeCast, stormotyler@gmail.com)")
         // fail fast if the host is unreachable
         .connect_timeout(Duration::from_secs(10))
         // cap the whole request, including reading the body

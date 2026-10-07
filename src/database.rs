@@ -14,8 +14,8 @@ impl DB {
     pub async fn init() -> Result<Self> {
         let mongodb_uri = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "mongodb://127.0.0.1:27017".to_string());
-        let database_name = std::env::var("TRAIL_ALERT_DB")
-            .unwrap_or_else(|_| "trail-alert".to_string());
+        let database_name = std::env::var("RIDGECAST_DB")
+            .unwrap_or_else(|_| "ridgecast".to_string());
 
         let mut client_options = ClientOptions::parse(mongodb_uri).await?;
         client_options.app_name = Some(database_name.clone());

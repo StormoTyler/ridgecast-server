@@ -1,7 +1,7 @@
-# TrailAlert SMS request format
+# RidgeCast SMS request format
 
-This document defines the text message that the TrailAlert iOS and Android apps
-send to the TrailAlert server to request a forecast, alert tracking, or an
+This document defines the text message that the RidgeCast iOS and Android apps
+send to the RidgeCast server to request a forecast, alert tracking, or an
 avalanche forecast. The apps and the server must both follow it exactly.
 
 The format is kept short so that every request fits in a single SMS segment,
@@ -14,25 +14,25 @@ Current version: **1**
 A request is one line made up of six fields separated by single spaces:
 
 ```
-TA1 44.0512 -123.0921 1845 24 3
+RC1 44.0512 -123.0921 1845 24 3
 │   │       │         │    │  └─ length     days of forecast in the reply
 │   │       │         │    └──── duration   hours a created tracker stays active
 │   │       │         └───────── flags      which options are turned on (4 hex digits)
 │   │       └─────────────────── longitude  decimal degrees
 │   └─────────────────────────── latitude   decimal degrees
-└─────────────────────────────── prefix     "TA" followed by the format version
+└─────────────────────────────── prefix     "RC" followed by the format version
 ```
 
 | Field | Format | Example |
 |---|---|---|
-| Prefix | `TA` followed by the format version as a decimal integer | `TA1` |
+| Prefix | `RC` followed by the format version as a decimal integer | `RC1` |
 | Latitude | Decimal degrees from `-90` to `90`, at most 4 decimal places | `44.0512` |
 | Longitude | Decimal degrees from `-180` to `180`, at most 4 decimal places | `-123.0921` |
 | Flags | Exactly 4 hexadecimal digits (`0`–`9`, `A`–`F`) | `1845` |
 | Tracker duration | Whole number of hours from `0` to `168`, 1 to 3 digits | `24` |
 | Forecast length | One digit from `1` to `7` | `3` |
 
-The longest possible message, `TA1 -90.0000 -180.0000 3FFF 168 7`, is 33
+The longest possible message, `RC1 -90.0000 -180.0000 3FFF 168 7`, is 33
 characters.
 
 The sender's phone number identifies the user, so the message body does not
@@ -148,18 +148,18 @@ the reply.
 
 | Request | Flags | Message |
 |---|---|---|
-| 1-day forecast only, no optional fields | `0000` | `TA1 44.0512 -123.0921 0000 0 1` |
-| 5-day forecast, no optional fields | `0000` | `TA1 44.0512 -123.0921 0000 0 5` |
-| Brief 2-day forecast only | `1000` | `TA1 44.0512 -123.0921 1000 0 2` |
-| Track alerts for 24 hours, no forecast | `0001` + `0002` = `0003` | `TA1 44.0512 -123.0921 0003 24 1` |
-| Track alerts and avalanche danger for 72 hours, brief 2-day forecast, relative humidity, wind gust | `0001` + `0004` + `0040` + `0800` + `1000` = `1845` | `TA1 44.0512 -123.0921 1845 72 2` |
-| Track alerts for one week, 3-day forecast, visibility, snow level, wind gust | `0001` + `0080` + `0400` + `0800` = `0C81` | `TA1 39.1968 -120.2354 0C81 168 3` |
-| Daily forecast for 72 hours, brief 1-day forecast | `2000` + `1000` = `3000` | `TA1 44.0512 -123.0921 3000 72 1` |
-| Every option on, trackers for 24 hours, 7-day forecast | `3FFF` | `TA1 44.0512 -123.0921 3FFF 24 7` |
+| 1-day forecast only, no optional fields | `0000` | `RC1 44.0512 -123.0921 0000 0 1` |
+| 5-day forecast, no optional fields | `0000` | `RC1 44.0512 -123.0921 0000 0 5` |
+| Brief 2-day forecast only | `1000` | `RC1 44.0512 -123.0921 1000 0 2` |
+| Track alerts for 24 hours, no forecast | `0001` + `0002` = `0003` | `RC1 44.0512 -123.0921 0003 24 1` |
+| Track alerts and avalanche danger for 72 hours, brief 2-day forecast, relative humidity, wind gust | `0001` + `0004` + `0040` + `0800` + `1000` = `1845` | `RC1 44.0512 -123.0921 1845 72 2` |
+| Track alerts for one week, 3-day forecast, visibility, snow level, wind gust | `0001` + `0080` + `0400` + `0800` = `0C81` | `RC1 39.1968 -120.2354 0C81 168 3` |
+| Daily forecast for 72 hours, brief 1-day forecast | `2000` + `1000` = `3000` | `RC1 44.0512 -123.0921 3000 72 1` |
+| Every option on, trackers for 24 hours, 7-day forecast | `3FFF` | `RC1 44.0512 -123.0921 3FFF 24 7` |
 
 ## Character set
 
-Use only the characters `T`, `A`, the digits `0`–`9`, `A`–`F`, `-`, `.`, and
+Use only the characters `R`, `C`, the digits `0`–`9`, `A`–`F`, `-`, `.`, and
 space. These are all in the GSM-7 character set, which allows 160 characters
 per SMS segment. A single character outside GSM-7, such as an emoji or a smart
 quote added by autocorrect, switches the whole message to UCS-2, which only
@@ -169,8 +169,8 @@ allows 70 characters per segment.
 
 - Leading and trailing whitespace is ignored, and fields may be separated by
   more than one space. Apps should still send exactly one space between fields.
-- The prefix is matched without regard to case, so `ta1` is accepted.
-- A message that does not start with `TA` is not treated as a request. The
+- The prefix is matched without regard to case, so `rc1` is accepted.
+- A message that does not start with `RC` is not treated as a request. The
   server replies with a short help message.
 - A message with an unsupported version number gets a reply asking the user to
   update the app.
@@ -190,7 +190,7 @@ As a regular expression, a valid version 1 message (after trimming whitespace
 and ignoring case) is:
 
 ```
-^TA1 +(-?\d{1,2}(\.\d{1,4})?) +(-?\d{1,3}(\.\d{1,4})?) +([0-9A-F]{4}) +(\d{1,3}) +([1-7])$
+^RC1 +(-?\d{1,2}(\.\d{1,4})?) +(-?\d{1,3}(\.\d{1,4})?) +([0-9A-F]{4}) +(\d{1,3}) +([1-7])$
 ```
 
 The pattern checks the shape of the message only. The server also checks that
@@ -215,7 +215,7 @@ Older app versions stay installed after a release, so the server must keep
 accepting every format version that apps in use still send.
 
 - Any change to the fields, their order, or the meaning of a flag bit requires
-  a new version number (`TA2`). Assigning one of the unassigned bits 14 and 15
+  a new version number (`RC2`). Assigning one of the unassigned bits 14 and 15
   to a new option also requires a new version, because servers that do not
   know the bit reject it.
 - Keep the bit table in this document in sync with `ForecastVars` and

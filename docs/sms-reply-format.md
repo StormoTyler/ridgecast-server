@@ -1,8 +1,8 @@
-# TrailAlert SMS reply format
+# RidgeCast SMS reply format
 
 **Status: draft.** Nothing in the server implements this yet.
 
-This document defines the text messages that the TrailAlert server sends to
+This document defines the text messages that the RidgeCast server sends to
 users: replies to requests (see [sms-format.md](sms-format.md)), scheduled
 daily forecasts, and tracker notifications.
 
@@ -310,8 +310,8 @@ that could not be read.
 
 | Cause | Line |
 |---|---|
-| `SmsParseError::UnsupportedVersion` | `Update the TrailAlert app` |
-| `SmsParseError::WrongFieldCount` | `Expected 5 fields, found 4` |
+| `SmsParseError::UnsupportedVersion` | `Update the RidgeCast app` |
+| `SmsParseError::WrongFieldCount` | `Expected 6 fields, found 5` |
 | `SmsParseError::InvalidLatitude` | `Bad latitude: 95.1` |
 | `SmsParseError::InvalidLongitude` | `Bad longitude: -123,09` |
 | `SmsParseError::InvalidFlags` | `Bad flags: G845` |
@@ -325,13 +325,13 @@ message instead:
 
 ```
 (1/1)
-TrailAlert: send requests from the TrailAlert app. Typed format: TA1 lat lon flags hours. Reply STOP to opt out.
+RidgeCast: send requests from the RidgeCast app. Typed format: RC1 lat lon flags hours days. Reply STOP to opt out.
 ```
 
 ## Examples
 
 A request for a 72-hour alert and avalanche tracker, relative humidity, and
-wind gust, with a 7-day forecast (`TA1 45.3735 -121.6959 0845 72 7`), answered in
+wind gust, with a 7-day forecast (`RC1 45.3735 -121.6959 0845 72 7`), answered in
 7 messages:
 
 ```
@@ -373,7 +373,7 @@ Mon: high 45F, low 31F. Wind S 10mph, gusts 18. Precip 40%, 0.10in. Humidity 55-
 ```
 
 The same request with `brief` and a 2-day forecast
-(`TA1 45.3735 -121.6959 1845 72 2`):
+(`RC1 45.3735 -121.6959 1845 72 2`):
 
 ```
 (1/1)

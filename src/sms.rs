@@ -1,4 +1,4 @@
-// parser for SMS requests sent by the TrailAlert IOS and Android apps
+// parser for SMS requests sent by the RidgeCast IOS and Android apps
 // the message format is documented in docs/sms-format.md
 
 use std::str::FromStr;
@@ -44,8 +44,8 @@ pub struct SmsRequest
 #[derive(Debug, Error, PartialEq)]
 pub enum SmsParseError
 {
-    // the message is not a TrailAlert request at all
-    #[error("message is not a TrailAlert request")]
+    // the message is not a RidgeCast request at all
+    #[error("message is not a RidgeCast request")]
     NotARequest,
     #[error("unsupported message format version {0}")]
     UnsupportedVersion(String),
@@ -109,14 +109,14 @@ impl FromStr for SmsRequest
     }
 }
 
-// returns the version digits from a "TA<version>" prefix
+// returns the version digits from a "RC<version>" prefix
 fn parse_prefix(prefix: &str) -> Result<&str, SmsParseError>
 {
-    // "TA" must be followed by digits only, so ordinary
-    // texts like "Take me home" are not read as requests
+    // "RC" must be followed by digits only, so ordinary
+    // texts like "RC car for sale" are not read as requests
     let version = match prefix.get(..2)
     {
-        Some(ta) if ta.eq_ignore_ascii_case("TA") => &prefix[2..],
+        Some(rc) if rc.eq_ignore_ascii_case("RC") => &prefix[2..],
         _ => return Err(SmsParseError::NotARequest),
     };
 
