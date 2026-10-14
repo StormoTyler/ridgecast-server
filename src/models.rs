@@ -12,6 +12,10 @@ use std::collections::HashMap;
 pub struct UserPoint       
 {                          
    pub user: String,          
+   // name the user gave the tracker, shown in its messages. None for a
+   // UserPoint that is not a tracker
+   #[serde(default)]
+   pub tracker_name: Option<String>,
    pub forecast_vars: ForecastVars,
    pub point: Point,
    pub avy: Option<AvyProperties>,

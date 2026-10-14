@@ -43,13 +43,29 @@ Avy danger 3 Considerable, Mt Hood
 ```
 
 The whole message, including the header and every line feed, is at most
-**140 characters**. The header line plus its line feed takes 6 characters,
-which leaves 134 for the body.
+**140 characters**. The longest header line, with a 10-character tracker name,
+plus its line feed takes 17 characters, which leaves 123 for the body. The
+server uses the same 123-character limit for every message, with or without a
+tracker name, so a body line fits under any header.
 
 ### Header
 
-The header is only `(x/n)`: `x` is the number of this message and `n` is the
-total number of messages in the response.
+The header is `(x/n)`: `x` is the number of this message and `n` is the
+total number of messages in the response. A message sent by a tracker adds a
+space and the tracker's name, as given in the request (see
+[sms-format.md](sms-format.md#tracker-name)):
+
+```
+(1/2) Mt Hood
+```
+
+- The name is in the header of every message that a tracker sends on its own:
+  daily forecasts, alert and avalanche notifications, and the tracking ended
+  message. A user with several trackers can tell which one a message is
+  about, even when only some of its messages arrive.
+- Replies to requests, errors, and the help message have no name in the
+  header. A reply that creates a tracker names it in its tracker line
+  instead.
 
 - Every message has a header, including a response that is a single message
   (`(1/1)`).
@@ -61,15 +77,15 @@ total number of messages in the response.
 
 ### Message kinds
 
-| Kind | Sent when | Body |
-|---|---|---|
-| Reply | A request is answered | Elevation, alerts, avalanche, tracker, forecast days |
-| Daily forecast | A `daily_forecast` tracker reaches 6 AM | Elevation, alerts, avalanche, forecast days |
-| Alert notification | A tracker finds a new NWS alert | The new alerts |
-| Avalanche notification | A tracker finds a new avalanche forecast | Avalanche |
-| Tracker ended | A tracker has ended | `Tracking ended` |
-| Error | A request could not be answered | Error line |
-| Help | A message that is not a request | Help text |
+| Kind | Sent when | Name in header | Body |
+|---|---|---|---|
+| Reply | A request is answered | No | Elevation, alerts, avalanche, tracker, forecast days |
+| Daily forecast | A `daily_forecast` tracker reaches 6 AM | Yes | Elevation, alerts, avalanche, forecast days |
+| Alert notification | A tracker finds a new NWS alert | Yes | The new alerts |
+| Avalanche notification | A tracker finds a new avalanche forecast | Yes | Avalanche |
+| Tracker ended | A tracker has ended | Yes | `Tracking ended` |
+| Error | A request could not be answered | No | Error line |
+| Help | A message that is not a request | No | Help text |
 
 ## Full format
 
@@ -80,13 +96,13 @@ total number of messages in the response.
 | Elevation | `Elevation 5240ft` |
 | Alert | `!Winter Storm Warning until Wed 10/7 6PM` |
 | Avalanche | `Avy danger 3 Considerable, Mt Hood` |
-| Tracker | `Tracking alerts, avy until Fri 10/9 10AM` |
+| Tracker | `Tracking Mt Hood: alerts, avy until Fri 10/9 10AM` |
 | Notice | `Daily forecast unavailable` |
 | Tracker ended | `Tracking ended` |
 | Forecast day | `Tue: high 34F, low 22F. Wind SW 25mph. Precip 90%, 0.85in. Snow 11in` |
 | Error | `Bad latitude: 95.1` |
 
-A line is at most 134 characters and is never split across two messages.
+A line is at most 123 characters and is never split across two messages.
 
 ### Times
 
@@ -149,11 +165,13 @@ as `get_requested_forecast` already does.
 ### Tracker
 
 ```
-Tracking alerts, avy, daily forecast until Fri 10/9 10AM
+Tracking Mt Hood: alerts, avy, daily forecast until Fri 10/9 10AM
 ```
 
-Included in a reply when the request created a tracker. It lists what is
-tracked (`alerts`, `avy`, `daily forecast`) and when the tracker ends.
+Included in a reply when the request created a tracker. It gives the
+tracker's name, what is tracked (`alerts`, `avy`, `daily forecast`), and when
+the tracker ends. The tracker's own messages show the name in their header,
+so the user can match them to this line.
 
 ### Notice
 
@@ -192,7 +210,7 @@ The server converts NWS's metric units to the units above. Rounding is to the
 nearest whole number unless the table says otherwise. The last sentence of a
 line has no final period.
 
-A line holds at most 134 characters. If a day's sentences do not fit in one
+A line holds at most 123 characters. If a day's sentences do not fit in one
 line, they continue on another line that starts with the day name again:
 
 ```
@@ -247,7 +265,8 @@ compact format with short labels. It contains:
 3. The request's forecast length in days, starting with today, with only the
    three always-present tokens and `P`, `R`, and `S`.
 
-There is no elevation, tracker, or notice line. If the message does not fit in
+There is no elevation, tracker, or notice line, so the brief format does not
+show the tracker name. If the message does not fit in
 140 characters, forecast days are dropped first, then the alert lines are
 replaced with `!+<n> alerts`.
 
@@ -316,6 +335,9 @@ that could not be read.
 | `SmsParseError::InvalidLongitude` | `Bad longitude: -123,09` |
 | `SmsParseError::InvalidFlags` | `Bad flags: G845` |
 | `SmsParseError::InvalidTrackerDuration` | `Bad tracker hours: 200` |
+| `SmsParseError::InvalidForecastLength` | `Bad forecast days: 9` |
+| `SmsParseError::MissingTrackerName` | `Tracker name missing` |
+| `SmsParseError::InvalidTrackerName` | `Bad tracker name: Mt Hood!` |
 | `APIError::LocationNotCovered` | `Location not covered by NWS forecasts` |
 | NWS or NAC is down or timed out | `Weather service unavailable, try later` |
 | Any other server error | `Server error, try later` |
@@ -325,20 +347,20 @@ message instead:
 
 ```
 (1/1)
-RidgeCast: send requests from the RidgeCast app. Typed format: RC1 lat lon flags hours days. Reply STOP to opt out.
+RidgeCast: send requests from the RidgeCast app. Typed format: RC1 lat lon flags hours days name. Reply STOP to opt out.
 ```
 
 ## Examples
 
 A request for a 72-hour alert and avalanche tracker, relative humidity, and
-wind gust, with a 7-day forecast (`RC1 45.3735 -121.6959 0845 72 7`), answered in
-7 messages:
+wind gust, named `Mt Hood`, with a 7-day forecast
+(`RC1 45.3735 -121.6959 0845 72 7 Mt Hood`), answered in 7 messages:
 
 ```
 (1/7)
 !Winter Storm Warning until Wed 10/7 6PM
 Avy danger 3 Considerable, Mt Hood
-Tracking alerts, avy until Fri 10/9 10AM
+Tracking Mt Hood: alerts, avy until Fri 10/9 10AM
 ```
 
 ```
@@ -373,7 +395,7 @@ Mon: high 45F, low 31F. Wind S 10mph, gusts 18. Precip 40%, 0.10in. Humidity 55-
 ```
 
 The same request with `brief` and a 2-day forecast
-(`RC1 45.3735 -121.6959 1845 72 2`):
+(`RC1 45.3735 -121.6959 1845 72 2 Mt Hood`):
 
 ```
 (1/1)
@@ -383,30 +405,35 @@ Tu 34/22 SW25 P90 R0.85 S11
 We 30/19 W18 P70 R0.30 S5
 ```
 
-A daily forecast:
+A daily forecast from a tracker named `Camp`:
 
 ```
-(1/2)
+(1/2) Camp
 Tue: high 68F, low 47F. Wind NW 8mph. Precip 10%
 Wed: high 72F, low 49F. Wind N 6mph
 ```
 
 ```
-(2/2)
+(2/2) Camp
 Thu: high 64F, low 50F. Wind S 12mph. Precip 60%, 0.20in
 ```
 
-Notifications from a tracker:
+Notifications from a tracker named `Mt Hood`:
 
 ```
-(1/1)
+(1/1) Mt Hood
 !Red Flag Warning until Thu 10/8 8PM
 !Wind Advisory until Wed 10/7 11AM
 ```
 
 ```
-(1/1)
+(1/1) Mt Hood
 Avy danger 4 High (was 3), Mt Hood
+```
+
+```
+(1/1) Mt Hood
+Tracking ended
 ```
 
 A reply with notices, to a request that set `track_avy` and `daily_forecast`

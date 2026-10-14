@@ -47,6 +47,7 @@ fn make_tracker(avy_id: Option<&str>, avy: Option<AvyProperties>) -> UserPoint
     UserPoint
     {
         user: "test".to_string(),
+        tracker_name: Some("test".to_string()),
         forecast_vars: ForecastVars { track_avy: true, ..ForecastVars::default() },
         point: make_point(43.74, -110.80),
         avy,

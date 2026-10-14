@@ -50,13 +50,13 @@ fn parses_documented_examples()
     let cases: [(&str, f32, f32, &[usize]); 8] =
     [
         ("RC1 44.0512 -123.0921 0000 0 1", 44.0512, -123.0921, &[]),
-        ("RC1 44.0512 -123.0921 0003 24 1", 44.0512, -123.0921, &[0, 1]),
-        ("RC1 44.0512 -123.0921 0845 72 1", 44.0512, -123.0921, &[0, 2, 6, 11]),
-        ("RC1 39.1968 -120.2354 0C81 168 1", 39.1968, -120.2354, &[0, 7, 10, 11]),
-        ("RC1 44.0512 -123.0921 0FFF 24 1", 44.0512, -123.0921, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
-        ("RC1 44.0512 -123.0921 1000 0 1", 44.0512, -123.0921, &[12]),
-        ("RC1 44.0512 -123.0921 2000 24 1", 44.0512, -123.0921, &[13]),
-        ("RC1 44.0512 -123.0921 3FFF 24 1", 44.0512, -123.0921, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]),
+        ("RC1 44.0512 -123.0921 0003 24 1 Spencer", 44.0512, -123.0921, &[0, 1]),
+        ("RC1 45.3735 -121.6959 1845 72 2 Mt Hood", 45.3735, -121.6959, &[0, 2, 6, 11, 12]),
+        ("RC1 39.1968 -120.2354 0C81 168 3 Tahoe", 39.1968, -120.2354, &[0, 7, 10, 11]),
+        ("RC1 44.0512 -123.0921 0FFF 24 1 Camp", 44.0512, -123.0921, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
+        ("RC1 44.0512 -123.0921 1000 0 2", 44.0512, -123.0921, &[12]),
+        ("RC1 44.0512 -123.0921 3000 72 1 Camp", 44.0512, -123.0921, &[12, 13]),
+        ("RC1 44.0512 -123.0921 3FFF 24 7 Camp", 44.0512, -123.0921, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]),
     ];
 
     for (message, lat, lon, bits) in cases
@@ -73,7 +73,9 @@ fn each_bit_maps_to_one_field()
 {
     for n in 0..14
     {
-        let message = format!("RC1 44.0 -123.0 {:04X} 24 1", 1u16 << n);
+        // bits 0, 2, and 13 create a tracker, which needs a name
+        let name = if [0, 2, 13].contains(&n) { " Camp" } else { "" };
+        let message = format!("RC1 44.0 -123.0 {:04X} 24 1{name}", 1u16 << n);
         let request = parse(&message).unwrap();
         assert_eq!(set_bits(&request), vec![n], "{message}");
     }
@@ -83,9 +85,9 @@ fn each_bit_maps_to_one_field()
 fn accepts_lenient_input()
 {
     // lowercase prefix and flags
-    assert_eq!(set_bits(&parse("rc1 44.0 -123.0 3fff 24 1").unwrap()).len(), 14);
+    assert_eq!(set_bits(&parse("rc1 44.0 -123.0 3fff 24 1 Camp").unwrap()).len(), 14);
     // surrounding whitespace and repeated spaces
-    let request = parse("  RC1   44.0512  -123.0921 0845  24  1 \n").unwrap();
+    let request = parse("  RC1   44.0512  -123.0921 0845  24  1   Camp \n").unwrap();
     assert_eq!(request.lat, 44.0512);
     // whole-number coordinates and the boundary values
     let request = parse("RC1 -90 180 0000 0 1").unwrap();
@@ -122,7 +124,9 @@ fn rejects_wrong_field_count()
     assert_eq!(parse("RC1 44.0 -123.0").unwrap_err(), SmsParseError::WrongFieldCount(3));
     // the version 1 layout before tracker_duration was added
     assert_eq!(parse("RC1 44.0 -123.0 000").unwrap_err(), SmsParseError::WrongFieldCount(4));
+    // a request without a tracker flag has no tracker name
     assert_eq!(parse("RC1 44.0 -123.0 0000 0 3 extra").unwrap_err(), SmsParseError::WrongFieldCount(7));
+    assert_eq!(parse("RC1 44.0 -123.0 0002 0 3 Mt Hood").unwrap_err(), SmsParseError::WrongFieldCount(8));
 }
 
 #[test]
@@ -157,8 +161,8 @@ fn rejects_invalid_flags()
         let message = format!("RC1 44.0 -123.0 {flags} 0 1");
         match parse(&message)
         {
-            // "08 45" splits into an extra field
-            Err(SmsParseError::WrongFieldCount(7)) if flags.contains(' ') => {}
+            // "08 45" splits into two fields, so only "08" is read as the flags
+            Err(SmsParseError::InvalidFlags(read)) if flags.contains(' ') => assert_eq!(read, "08"),
             result => assert_eq!(result.unwrap_err(),
                 SmsParseError::InvalidFlags(flags.to_string()), "{message}"),
         }
@@ -175,9 +179,9 @@ fn parses_tracker_duration()
         ("RC1 44.0 -123.0 0002 0 1", 0),
         // a duration without a tracker flag is still accepted
         ("RC1 44.0 -123.0 0000 12 1", 12),
-        ("RC1 44.0 -123.0 0001 1 1", 1),
-        ("RC1 44.0 -123.0 0004 168 1", 168),
-        ("RC1 44.0 -123.0 0005 024 1", 24),
+        ("RC1 44.0 -123.0 0001 1 1 Camp", 1),
+        ("RC1 44.0 -123.0 0004 168 1 Camp", 168),
+        ("RC1 44.0 -123.0 0005 024 1 Camp", 24),
     ];
 
     for (message, hours) in cases
@@ -192,7 +196,7 @@ fn rejects_invalid_tracker_duration()
 {
     for duration in ["169", "999", "1000", "-1", "+24", "24.0", "2e1", "24h", "x"]
     {
-        let message = format!("RC1 44.0 -123.0 0001 {duration} 1");
+        let message = format!("RC1 44.0 -123.0 0001 {duration} 1 Camp");
         assert_eq!(parse(&message).unwrap_err(),
             SmsParseError::InvalidTrackerDuration(duration.to_string()), "{message}");
     }
@@ -204,7 +208,7 @@ fn rejects_zero_duration_with_tracker()
     // track_alerts, track_avy, daily_forecast, and combinations
     for flags in ["0001", "0004", "2000", "0005", "2002", "3FFF"]
     {
-        let message = format!("RC1 44.0 -123.0 {flags} 0 1");
+        let message = format!("RC1 44.0 -123.0 {flags} 0 1 Camp");
         assert_eq!(parse(&message).unwrap_err(),
             SmsParseError::InvalidTrackerDuration("0".to_string()), "{message}");
     }
@@ -225,7 +229,7 @@ fn parses_forecast_length()
         assert_eq!(parse(&message).unwrap().forecast_length, days, "{message}");
     }
     // surrounding whitespace and repeated spaces, like the other fields
-    assert_eq!(parse(" RC1 44.0 -123.0 0001 24   3 ").unwrap().forecast_length, 3);
+    assert_eq!(parse(" RC1 44.0 -123.0 0001 24   3 Camp ").unwrap().forecast_length, 3);
 }
 
 #[test]
@@ -244,6 +248,62 @@ fn forecast_length_is_checked_after_the_other_fields()
 {
     assert_eq!(parse("RC1 44.0 -123.0 0001 0 9").unwrap_err(),
         SmsParseError::InvalidTrackerDuration("0".to_string()));
+}
+
+#[test]
+fn parses_tracker_name()
+{
+    let cases: [(&str, Option<&str>); 7] =
+    [
+        // no tracker flag, no name
+        ("RC1 44.0 -123.0 0000 0 1", None),
+        ("RC1 44.0 -123.0 1002 0 1", None),
+        ("RC1 44.0 -123.0 0001 24 1 Camp", Some("Camp")),
+        // a name may contain spaces, and repeated spaces are read as one
+        ("RC1 44.0 -123.0 0004 24 1 Mt Hood", Some("Mt Hood")),
+        ("RC1 44.0 -123.0 2000 24 1   Mt   Hood  ", Some("Mt Hood")),
+        // case is kept, and the longest name is 10 characters including spaces
+        ("RC1 44.0 -123.0 0001 24 1 bob's #2 (", Some("bob's #2 (")),
+        ("RC1 44.0 -123.0 0001 24 1 A-B.C&D/E)", Some("A-B.C&D/E)")),
+    ];
+
+    for (message, name) in cases
+    {
+        let request = parse(message).unwrap_or_else(|e| panic!("{message}: {e}"));
+        assert_eq!(request.tracker_name.as_deref(), name, "{message}");
+    }
+}
+
+#[test]
+fn tracker_name_is_required_with_a_tracker()
+{
+    for flags in ["0001", "0004", "2000", "3FFF"]
+    {
+        let message = format!("RC1 44.0 -123.0 {flags} 24 1");
+        assert_eq!(parse(&message).unwrap_err(), SmsParseError::MissingTrackerName, "{message}");
+    }
+}
+
+#[test]
+fn rejects_invalid_tracker_name()
+{
+    // too long, including the space, and characters outside the allowed set,
+    // such as an autocorrected apostrophe, an accented letter, or an emoji
+    for name in ["Cascade Lks", "ABCDEFGHIJK", "Bob\u{2019}s", "Cafe\u{301}", "Ros\u{e9}", "\u{26f0}", "Hood!", "a_b", "a,b", "a\"b"]
+    {
+        let message = format!("RC1 44.0 -123.0 0001 24 1 {name}");
+        assert_eq!(parse(&message).unwrap_err(),
+            SmsParseError::InvalidTrackerName(name.to_string()), "{message}");
+    }
+}
+
+#[test]
+fn tracker_name_is_checked_after_the_other_fields()
+{
+    assert_eq!(parse("RC1 44.0 -123.0 0001 24 9 Camp").unwrap_err(),
+        SmsParseError::InvalidForecastLength("9".to_string()));
+    assert_eq!(parse("RC1 44.0 -123.0 0001 24 Mt Hood").unwrap_err(),
+        SmsParseError::InvalidForecastLength("Mt".to_string()));
 }
 
 const LOS_ANGELES: Tz = chrono_tz::America::Los_Angeles;

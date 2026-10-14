@@ -11,16 +11,18 @@ Current version: **1**
 
 ## Message layout
 
-A request is one line made up of six fields separated by single spaces:
+A request is one line made up of six fields separated by single spaces,
+followed by a tracker name when the request creates a tracker:
 
 ```
-RC1 44.0512 -123.0921 1845 24 3
-│   │       │         │    │  └─ length     days of forecast in the reply
-│   │       │         │    └──── duration   hours a created tracker stays active
-│   │       │         └───────── flags      which options are turned on (4 hex digits)
-│   │       └─────────────────── longitude  decimal degrees
-│   └─────────────────────────── latitude   decimal degrees
-└─────────────────────────────── prefix     "RC" followed by the format version
+RC1 44.0512 -123.0921 1845 24 3 Mt Hood
+│   │       │         │    │  │ └─ name       tracker name, only with a tracker flag
+│   │       │         │    │  └─── length     days of forecast in the reply
+│   │       │         │    └────── duration   hours a created tracker stays active
+│   │       │         └─────────── flags      which options are turned on (4 hex digits)
+│   │       └───────────────────── longitude  decimal degrees
+│   └───────────────────────────── latitude   decimal degrees
+└───────────────────────────────── prefix     "RC" followed by the format version
 ```
 
 | Field | Format | Example |
@@ -31,9 +33,10 @@ RC1 44.0512 -123.0921 1845 24 3
 | Flags | Exactly 4 hexadecimal digits (`0`–`9`, `A`–`F`) | `1845` |
 | Tracker duration | Whole number of hours from `0` to `168`, 1 to 3 digits | `24` |
 | Forecast length | One digit from `1` to `7` | `3` |
+| Tracker name | 1 to 10 characters, may contain spaces. Sent only when a tracker flag is set | `Mt Hood` |
 
-The longest possible message, `RC1 -90.0000 -180.0000 3FFF 168 7`, is 33
-characters.
+The longest possible message, `RC1 -90.0000 -180.0000 3FFF 168 7 ABCDEFGHIJ`, is
+44 characters.
 
 The sender's phone number identifies the user, so the message body does not
 include an account or user ID.
@@ -104,6 +107,8 @@ that covers all of them.
   active. See [Daily forecast](#daily-forecast).
 - When no tracker flag is set, the request creates no tracker. Send `0`.
   The server accepts any value up to `168` and ignores it.
+- A request with a tracker flag set must end with a tracker name. See
+  [Tracker name](#tracker-name).
 - Write the number in decimal digits only, with no sign, decimal point, or unit.
 
 ### Forecast length
@@ -120,6 +125,31 @@ midnight.
   [sms-reply-format.md](sms-reply-format.md)).
 - With `no_forecast` set, the reply has no forecast. The field must still be
   sent, and the server ignores its value. Send `1`.
+
+### Tracker name
+
+A name the user gives the tracker, such as `Mt Hood` or `Camp 2`. Every
+message the tracker sends (alert and avalanche notifications, daily
+forecasts, and the tracking ended message) shows the name, so a user with
+several trackers can tell which location a message is about. See
+[sms-reply-format.md](sms-reply-format.md).
+
+- The name is the last field. Everything after the forecast length is the
+  name, so it may contain spaces.
+- Send it only when a tracker flag (`track_alerts`, `track_avy`, or
+  `daily_forecast`) is set. A request with a tracker flag and no name is
+  rejected, and so is a request with a name and no tracker flag.
+- 1 to 10 characters, counting the spaces between words. The server reads
+  repeated spaces as one and ignores trailing spaces, so send single spaces
+  and trim the name before counting.
+- Only the letters `A`–`Z` and `a`–`z`, the digits `0`–`9`, space, and
+  `-` `'` `.` `#` `&` `(` `)` `/`. Accented letters, emoji, and other
+  punctuation are rejected. The apps should limit the text field to these
+  characters and turn off smart punctuation for it, since iOS replaces `'`
+  with `’`, which is rejected.
+- Case is kept as sent.
+- Names do not need to be unique. The server does not use the name to find a
+  tracker.
 
 ### Daily forecast
 
@@ -151,16 +181,18 @@ the reply.
 | 1-day forecast only, no optional fields | `0000` | `RC1 44.0512 -123.0921 0000 0 1` |
 | 5-day forecast, no optional fields | `0000` | `RC1 44.0512 -123.0921 0000 0 5` |
 | Brief 2-day forecast only | `1000` | `RC1 44.0512 -123.0921 1000 0 2` |
-| Track alerts for 24 hours, no forecast | `0001` + `0002` = `0003` | `RC1 44.0512 -123.0921 0003 24 1` |
-| Track alerts and avalanche danger for 72 hours, brief 2-day forecast, relative humidity, wind gust | `0001` + `0004` + `0040` + `0800` + `1000` = `1845` | `RC1 44.0512 -123.0921 1845 72 2` |
-| Track alerts for one week, 3-day forecast, visibility, snow level, wind gust | `0001` + `0080` + `0400` + `0800` = `0C81` | `RC1 39.1968 -120.2354 0C81 168 3` |
-| Daily forecast for 72 hours, brief 1-day forecast | `2000` + `1000` = `3000` | `RC1 44.0512 -123.0921 3000 72 1` |
-| Every option on, trackers for 24 hours, 7-day forecast | `3FFF` | `RC1 44.0512 -123.0921 3FFF 24 7` |
+| Track alerts for 24 hours as `Spencer`, no forecast | `0001` + `0002` = `0003` | `RC1 44.0512 -123.0921 0003 24 1 Spencer` |
+| Track alerts and avalanche danger for 72 hours as `Mt Hood`, brief 2-day forecast, relative humidity, wind gust | `0001` + `0004` + `0040` + `0800` + `1000` = `1845` | `RC1 45.3735 -121.6959 1845 72 2 Mt Hood` |
+| Track alerts for one week as `Tahoe`, 3-day forecast, visibility, snow level, wind gust | `0001` + `0080` + `0400` + `0800` = `0C81` | `RC1 39.1968 -120.2354 0C81 168 3 Tahoe` |
+| Daily forecast for 72 hours as `Camp`, brief 1-day forecast | `2000` + `1000` = `3000` | `RC1 44.0512 -123.0921 3000 72 1 Camp` |
+| Every option on, trackers for 24 hours as `Camp`, 7-day forecast | `3FFF` | `RC1 44.0512 -123.0921 3FFF 24 7 Camp` |
 
 ## Character set
 
-Use only the characters `R`, `C`, the digits `0`–`9`, `A`–`F`, `-`, `.`, and
-space. These are all in the GSM-7 character set, which allows 160 characters
+Outside the tracker name, use only the characters `R`, `C`, the digits
+`0`–`9`, `A`–`F`, `-`, `.`, and space. The tracker name adds the other
+letters and `'` `#` `&` `(` `)` `/` (see [Tracker name](#tracker-name)). These
+are all in the GSM-7 character set, which allows 160 characters
 per SMS segment. A single character outside GSM-7, such as an emoji or a smart
 quote added by autocorrect, switches the whole message to UCS-2, which only
 allows 70 characters per segment.
@@ -169,7 +201,8 @@ allows 70 characters per segment.
 
 - Leading and trailing whitespace is ignored, and fields may be separated by
   more than one space. Apps should still send exactly one space between fields.
-- The prefix is matched without regard to case, so `rc1` is accepted.
+- The prefix and flags are matched without regard to case, so `rc1` is
+  accepted. The tracker name keeps its case.
 - A message that does not start with `RC` is not treated as a request. The
   server replies with a short help message.
 - A message with an unsupported version number gets a reply asking the user to
@@ -177,26 +210,34 @@ allows 70 characters per segment.
 - A message with the right prefix but an invalid field (a coordinate out of
   range, too many decimal places, flags that are not exactly 4 hex digits
   or set an unassigned bit, or
-  a tracker duration that is out of range or `0` with a tracker flag set, or
-  a forecast length that is not one digit from `1` to `7`) gets a reply
+  a tracker duration that is out of range or `0` with a tracker flag set,
+  a forecast length that is not one digit from `1` to `7`, or a tracker name
+  that is too long or uses a character that is not allowed) gets a reply
   naming the field that could not be read.
+- A request with a tracker flag and no tracker name gets a reply saying the
+  name is missing. A request with no tracker flag and anything after the
+  forecast length gets a reply about the field count.
+- Fields are checked in order, so the reply names the first field that could
+  not be read. The tracker name is checked last.
 - The server does not check whether a `daily_forecast` tracker's duration
   includes a 6 AM (see [Daily forecast](#daily-forecast)). The apps are
   responsible for not sending a request that would never send a forecast.
 
 The server's reply messages are defined in [sms-reply-format.md](sms-reply-format.md) (draft).
 
-As a regular expression, a valid version 1 message (after trimming whitespace
-and ignoring case) is:
+As a regular expression, a valid version 1 message (after trimming whitespace)
+is:
 
 ```
-^RC1 +(-?\d{1,2}(\.\d{1,4})?) +(-?\d{1,3}(\.\d{1,4})?) +([0-9A-F]{4}) +(\d{1,3}) +([1-7])$
+^[Rr][Cc]1 +(-?\d{1,2}(\.\d{1,4})?) +(-?\d{1,3}(\.\d{1,4})?) +([0-9A-Fa-f]{4}) +(\d{1,3}) +([1-7])( +([A-Za-z0-9'.#&()/-]+( +[A-Za-z0-9'.#&()/-]+)*))?$
 ```
 
 The pattern checks the shape of the message only. The server also checks that
 the latitude is within ±90, the longitude within ±180, that no unassigned flag
-bit is set, and that the tracker duration follows the rules above. The
-pattern checks the forecast length completely.
+bit is set, that the tracker duration follows the rules above, that the
+tracker name is present exactly when a tracker flag is set, and that the name
+is at most 10 characters with repeated spaces read as one. The pattern checks
+the forecast length completely.
 
 ## Sending from the apps
 

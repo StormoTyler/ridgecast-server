@@ -26,6 +26,8 @@ const MAX_TRACKER_DURATION: u32 = 168;
 const USED_FLAG_BITS: u16 = 0x3FFF;
 // longest forecast in the reply to a request, in days
 const MAX_FORECAST_LENGTH: u32 = 7;
+// longest tracker name, in characters
+const MAX_TRACKER_NAME_LENGTH: usize = 10;
 
 #[derive(Debug, Clone)]
 pub struct SmsRequest
@@ -37,6 +39,9 @@ pub struct SmsRequest
     // number of days forecast that is received on initial request
     // 1 to 7, always sent by the apps
     pub forecast_length: u32,
+    // name of the tracker created by the request, shown in its messages
+    // Some when a tracker flag is set, None otherwise
+    pub tracker_name: Option<String>,
     // which optional forecast fields are used for a given forecast
     pub forecast_vars: ForecastVars,
 }
@@ -61,6 +66,10 @@ pub enum SmsParseError
     InvalidTrackerDuration(String),
     #[error("invalid forecast length: {0}")]
     InvalidForecastLength(String),
+    #[error("a tracker flag is set but the tracker name is missing")]
+    MissingTrackerName,
+    #[error("invalid tracker name: {0}")]
+    InvalidTrackerName(String),
 }
 
 impl FromStr for SmsRequest
@@ -84,7 +93,8 @@ impl FromStr for SmsRequest
             return Err(SmsParseError::UnsupportedVersion(version.to_string()));
         }
 
-        let [_, lat, lon, flags, duration, length] = fields[..]
+        // everything after the forecast length is the tracker name
+        let [_, lat, lon, flags, duration, length, ref name @ ..] = fields[..]
         else
         {
             return Err(SmsParseError::WrongFieldCount(fields.len()));
@@ -104,8 +114,24 @@ impl FromStr for SmsRequest
             .ok_or_else(|| SmsParseError::InvalidTrackerDuration(duration.to_string()))?;
         let forecast_length = parse_forecast_length(length)
             .ok_or_else(|| SmsParseError::InvalidForecastLength(length.to_string()))?;
+        let tracker_name = match (creates_tracker, name)
+        {
+            (true, []) => return Err(SmsParseError::MissingTrackerName),
+            (true, words) =>
+            {
+                let name = words.join(" ");
+                match is_valid_tracker_name(&name)
+                {
+                    true => Some(name),
+                    false => return Err(SmsParseError::InvalidTrackerName(name)),
+                }
+            }
+            (false, []) => None,
+            // a request without a tracker has exactly 6 fields
+            (false, _) => return Err(SmsParseError::WrongFieldCount(fields.len())),
+        };
 
-        Ok(SmsRequest { lat, lon, tracker_duration, forecast_length, forecast_vars })
+        Ok(SmsRequest { lat, lon, tracker_duration, forecast_length, tracker_name, forecast_vars })
     }
 }
 
@@ -186,6 +212,15 @@ fn parse_forecast_length(value: &str) -> Option<u32>
     }
     let days: u32 = value.parse().ok()?;
     (1..=MAX_FORECAST_LENGTH).contains(&days).then_some(days)
+}
+
+// a tracker name is 1 to MAX_TRACKER_NAME_LENGTH characters, counting the single
+// spaces between words, and uses only letters, digits, and - ' . # & ( ) /,
+// which are all in the GSM-7 basic character set
+fn is_valid_tracker_name(name: &str) -> bool
+{
+    (1..=MAX_TRACKER_NAME_LENGTH).contains(&name.len())
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b" -'.#&()/".contains(&b))
 }
 
 // flags are exactly 4 hex digits, one bit per ForecastVars field
@@ -373,7 +408,7 @@ pub(crate) fn trim_ints(mut series: IntVec, end: DateTime<Utc>) -> IntVec
 pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     -> Result<SmsForecastResponse, APIError>
 {
-    let SmsRequest { lat, lon, tracker_duration, forecast_length, forecast_vars } = request;
+    let SmsRequest { lat, lon, tracker_duration, forecast_length, tracker_name, forecast_vars } = request;
     let (lat, lon) = (*lat, *lon);
 
     let alerts = match db.alerts_collection.find_one(doc! {}).await
@@ -499,6 +534,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         let user_point = UserPoint
         {
             user: user.to_string(),
+            tracker_name: tracker_name.clone(),
             forecast_vars: ForecastVars { track_avy, daily_forecast, ..forecast_vars.clone() },
             point: point.clone(),
             // only an avalanche tracker stores its zone

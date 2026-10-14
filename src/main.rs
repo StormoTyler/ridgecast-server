@@ -145,6 +145,7 @@ async fn new_forecast(State(db): State<DB>) -> Response
     let user_point = UserPoint
     {
         user: "whatever".to_string(),
+        tracker_name: None,
         // all options off: forecast only, no alert tracking
         forecast_vars: ForecastVars::default(),
         point: forecast.point.clone(),
