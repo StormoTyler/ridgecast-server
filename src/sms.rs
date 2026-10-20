@@ -196,7 +196,13 @@ fn parse_tracker_duration(value: &str, creates_tracker: bool) -> Option<u32>
         return None;
     }
     let hours: u32 = value.parse().ok()?;
-    if hours > MAX_TRACKER_DURATION || (creates_tracker && hours == 0)
+    // sets the tracker duration to the maximum duration
+    // if the requested tracker exceeds the maximum duration
+    if hours > MAX_TRACKER_DURATION
+    {
+        return Some(168);
+    }
+    if (creates_tracker && hours == 0)
     {
         return None;
     }

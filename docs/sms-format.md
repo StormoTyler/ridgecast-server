@@ -102,7 +102,8 @@ and `daily_forecast`. A request with several of them set creates one tracker
 that covers all of them.
 
 - When any tracker flag is set, the duration must be from `1` to `168`. A
-  duration of `0` is rejected.
+  duration of `0` is rejected. Trackers requested over 168 hours are set
+  to 168 hours by default.
 - A `daily_forecast` tracker sends a forecast each day at 6 AM while it is
   active. See [Daily forecast](#daily-forecast).
 - When no tracker flag is set, the request creates no tracker. Send `0`.

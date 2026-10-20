@@ -194,7 +194,7 @@ fn parses_tracker_duration()
 #[test]
 fn rejects_invalid_tracker_duration()
 {
-    for duration in ["169", "999", "1000", "-1", "+24", "24.0", "2e1", "24h", "x"]
+    for duration in ["-1", "+24", "24.0", "2e1", "24h", "x"]
     {
         let message = format!("RC1 44.0 -123.0 0001 {duration} 1 Camp");
         assert_eq!(parse(&message).unwrap_err(),
