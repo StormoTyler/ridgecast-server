@@ -36,7 +36,7 @@ use crate::models::{UserPoint, Point, ForecastVars, ForecastProperties, PointGeo
     NWR, Alerts, Alert, GeometryTypes, AlertData,
     Geocode, AlertsSorted, Forecast, Properties,
     Elevation, IntVec, TimeInt, FloatVec, TimeFloat, ForecastResponse,
-    NWSError, AvalancheData, AvyArea, AvyProperties, AvyWarning};
+    NWSError, AvalancheData, AvyArea, AvyProperties};
 
 #[derive(Error, Debug, Serialize, Deserialize)]
 pub enum APIError
@@ -150,7 +150,6 @@ async fn new_forecast(State(db): State<DB>) -> Response
         forecast_vars: ForecastVars::default(),
         point: forecast.point.clone(),
         avy: None,
-        avy_id: None,
         time_added: chrono::Utc::now(),
         valid_duration: 0,
         next_daily_forecast: None,

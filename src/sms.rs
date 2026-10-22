@@ -15,7 +15,7 @@ use crate::daily_forecast;
 use crate::database::DB;
 use crate::handlers::{nac, nws};
 use crate::handlers::nac::NACError;
-use crate::models::{Alert, AvyHashMap, AvyProperties, Elevation, FloatVec, ForecastProperties,
+use crate::models::{Alert, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
     ForecastResponse, ForecastVars, IntVec, NWSError, Point, Properties,
     UserPoint};
 
@@ -456,11 +456,9 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     };
 
     let mut avy_notice = None;
-    // zone id of a tracked zone that has no current forecast
-    let mut no_forecast_id = None;
     // an off season zone is not tracked
     let mut track_avy = forecast_vars.track_avy;
-    let zone = if forecast_vars.track_avy
+    let avy = if forecast_vars.track_avy
     {
         let checked = match load_avy(db).await
         {
@@ -471,10 +469,11 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         match checked
         {
             Ok(zone) => zone,
-            Err(NACError::NoForecastError(id)) =>
+            // the zone is still tracked with no stored forecast,
+            // so its next forecast is reported as new
+            Err(NACError::NoForecastError) =>
             {
                 avy_notice = Some("There is no current avalanche forecast for this location.");
-                no_forecast_id = Some(id);
                 None
             }
             Err(NACError::OffSeasonError) =>
@@ -502,10 +501,6 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
             result => result?,
         }
     };
-    let (avy_id, avy) = zone.unzip();
-    // a zone without a current forecast is tracked with no stored forecast,
-    // so its next forecast is reported as new
-    let avy_id = avy_id.or(no_forecast_id);
 
     let time_added = chrono::Utc::now();
     let expires = time_added + chrono::Duration::hours((*tracker_duration).into());
@@ -543,9 +538,8 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
             tracker_name: tracker_name.clone(),
             forecast_vars: ForecastVars { track_avy, daily_forecast, ..forecast_vars.clone() },
             point: point.clone(),
-            // only an avalanche tracker stores its zone
+            // only an avalanche tracker stores its zone's forecast
             avy: if track_avy { avy.clone() } else { None },
-            avy_id: if track_avy { avy_id } else { None },
             time_added,
             valid_duration: *tracker_duration,
             next_daily_forecast,
@@ -572,7 +566,7 @@ fn nws_error(call: &str, lat: f32, lon: f32, e: NWSError, fallback: APIError) ->
 }
 
 // reads the stored avalanche zones
-async fn load_avy(db: &DB) -> Result<AvyHashMap, APIError>
+async fn load_avy(db: &DB) -> Result<AvalancheData, APIError>
 {
     match db.avy_collection.find_one(doc! {}).await
     {
@@ -586,8 +580,8 @@ async fn load_avy(db: &DB) -> Result<AvyHashMap, APIError>
     }
 }
 
-// returns the id and forecast of the stored avalanche zone containing the point, if any
-async fn find_avy_zone(point: &Point, db: &DB) -> Result<Option<(String, AvyProperties)>, APIError>
+// returns the forecast of the stored avalanche zone containing the point, if any
+async fn find_avy_zone(point: &Point, db: &DB) -> Result<Option<AvyProperties>, APIError>
 {
     let avy = load_avy(db).await?;
 
@@ -604,10 +598,10 @@ async fn find_avy_zone(point: &Point, db: &DB) -> Result<Option<(String, AvyProp
 }
 
 // checks if the point is in any avalanche forecast zone
-// returns the id and avy_properties for the area if danger_level >= 3
-async fn get_avy_no_tracker(point: &Point, db: &DB) -> Result<Option<(String, AvyProperties)>, APIError>
+// returns the avy_properties for the area if danger_level >= 3
+async fn get_avy_no_tracker(point: &Point, db: &DB) -> Result<Option<AvyProperties>, APIError>
 {
     let zone = find_avy_zone(point, db).await?;
     // NAC rates danger 1 (low) to 5 (extreme), 3 is considerable
-    Ok(zone.filter(|(_, properties)| properties.danger_level.is_some_and(|level| level >= 3)))
+    Ok(zone.filter(|properties| properties.danger_level.is_some_and(|level| level >= 3)))
 }

@@ -19,9 +19,6 @@ pub struct UserPoint
    pub forecast_vars: ForecastVars,
    pub point: Point,
    pub avy: Option<AvyProperties>,
-   // NAC id of the tracked zone, the key into AvyHashMap.lookup_map
-   #[serde(default)]
-   pub avy_id: Option<String>,
    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
    pub time_added: DateTime<Utc>,
    pub valid_duration: u32,
@@ -340,14 +337,13 @@ pub struct AvalancheData
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AvyArea
 {
-    pub id: i32, // currently uncertain whether this can be used for quick rechecking
     pub properties: AvyProperties,
     // if there is no geometry, the data is compromised
     // therefore an option is not used
     pub geometry: GeometryTypes,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AvyProperties
 {
     pub name: Option<String>,
@@ -362,28 +358,6 @@ pub struct AvyProperties
     pub start_date: Option<DateTimeTypes>,
     pub end_date: Option<DateTimeTypes>,
     //pub warning: Option<AvyWarningTypes>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AvyWarning
-{
-    pub product: Option<String>,
-    pub start_date: Option<chrono::DateTime<FixedOffset>>,
-    pub end_date: Option<chrono::DateTime<FixedOffset>>,
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AvyWarningNull
-{
-    pub product: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum AvyWarningTypes
-{
-    AvyWarning(AvyWarning),
-    AvyWarningNull(AvyWarningNull),
 }
 
 // shared data structures for dealing with gemetric areas
@@ -441,12 +415,4 @@ pub enum DateTimeTypes
     // don't get matched as naive when deserialized from mongo
     Aware(chrono::DateTime<FixedOffset>),
     Naive(chrono::NaiveDateTime),
-}
-
-// data structure for checking if a point intersects with an avalanche forecast area
-// or if there is a new avalanche forecast for an avalanche tracker
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AvyHashMap
-{
-    pub lookup_map: HashMap<String, AvyArea>
 }

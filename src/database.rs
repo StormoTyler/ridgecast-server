@@ -1,13 +1,13 @@
 use mongodb::{bson::doc, error::Result, options::ClientOptions, Client, Collection, IndexModel};
 
 // local modules
-use crate::models::{AlertsSorted, UserPoint, AvyHashMap};
+use crate::models::{AlertsSorted, UserPoint, AvalancheData};
 
 #[derive(Clone, Debug)]
 pub struct DB {
     pub alerts_collection: Collection<AlertsSorted>,
     pub points_collection: Collection<UserPoint>,
-    pub avy_collection: Collection<AvyHashMap>,
+    pub avy_collection: Collection<AvalancheData>,
 }
 
 impl DB {
@@ -28,7 +28,7 @@ impl DB {
 
         let alerts_collection = database.collection::<AlertsSorted>("alerts");
         let points_collection = database.collection::<UserPoint>("points");
-        let avy_collection = database.collection::<AvyHashMap>("avy");
+        let avy_collection = database.collection::<AvalancheData>("avy");
 
         // the scheduler finds due daily forecasts with next_daily_forecast <= now.
         // creating an index that already exists does nothing

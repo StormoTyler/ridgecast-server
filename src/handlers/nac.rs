@@ -14,8 +14,8 @@ use geojson::GeometryValue;
 use chrono_tz::Tz;
 
 // local modules
-use crate::models::{AvalancheData, AvyArea, AvyProperties, AvyWarning, 
-    AvyHashMap, Point, DateTimeTypes, GeometryTypes, RawFeatures, UserPoint};
+use crate::models::{AvalancheData, AvyArea, AvyProperties, Point, 
+    DateTimeTypes, GeometryTypes, RawFeatures, UserPoint};
 
 const BASE_URL: &str = "https://api.avalanche.org/v2/public/products/map-layer";
 
@@ -41,8 +41,7 @@ pub enum NACError
     #[error("could not complete avalanche danger check")]
     CheckError,
     #[error("no current avalanche forecast available")]
-    // carries the zone id, so the zone can still be tracked
-    NoForecastError(String),
+    NoForecastError,
     #[error("relevant avalanche center is in its off season")]
     OffSeasonError,
 }
@@ -86,7 +85,7 @@ async fn fetch_avy() -> Result<RawFeatures, NACError>
     Ok(serde_json::from_value(avy_json)?)
 }
 
-pub async fn get_avy() -> Result<AvyHashMap, NACError>
+pub async fn get_avy() -> Result<AvalancheData, NACError>
 {
     // retry once if the response is malformed
     let raw = match fetch_avy().await
@@ -100,12 +99,13 @@ pub async fn get_avy() -> Result<AvyHashMap, NACError>
     };
     //println!("{:?}", avy);
 
-    Ok(build_avy_map(raw.parse("NAC map layer")))
+    // wrap the zones so the snapshot is stored as a single document
+    Ok(AvalancheData { features: build_avy_map(raw.parse("NAC map layer")) })
 }
 
 // converts each zone's dates to local time and its geometry to geo_types,
-// then keys the zones by NAC id so check_avy_geometry and check_avy_id can use them
-pub fn build_avy_map(mut features: Vec<AvyArea>) -> AvyHashMap
+// so check_avy_geometry can test points against them
+pub fn build_avy_map(mut features: Vec<AvyArea>) -> Vec<AvyArea>
 {
     for area in features.iter_mut()
     {
@@ -149,31 +149,25 @@ pub fn build_avy_map(mut features: Vec<AvyArea>) -> AvyHashMap
         }
     }
 
-    // key each zone by its NAC id for direct lookups
-    let lookup_map = features
-        .into_iter()
-        .map(|area| (area.id.to_string(), area))
-        .collect();
-
-    AvyHashMap { lookup_map }
+    features
 }
 
 // checks whether a point intersects with an avalanche forecast zone 
-// and returns the zone's id along with the area name, avalanche center, and forecast danger
+// and returns the area name, avalanche center, and forecast danger
 // errors if the zone's center is in its off season or the zone has no current forecast
-pub async fn check_avy_geometry(point: &Point, avy_data: &AvyHashMap) ->
-    Result<Option<(String, AvyProperties)>, NACError>
+pub async fn check_avy_geometry(point: &Point, avy_data: &AvalancheData) ->
+    Result<Option<AvyProperties>, NACError>
 {
     let coordinates = point.geometry.coordinates;
 
     // intersects, so a point on a zone boundary still matches
-    let zone = avy_data.lookup_map.iter().find(|(_, area)| match &area.geometry
+    let zone = avy_data.features.iter().find(|area| match &area.geometry
     {
         GeometryTypes::Polygon(value) => value.intersects(&coordinates),
         GeometryTypes::MultiPolygon(value) => value.intersects(&coordinates),
         GeometryTypes::Geojson(_) => false,
     });
-    let Some((id, area)) = zone
+    let Some(area) = zone
     else
     {
         return Ok(None);
@@ -186,36 +180,31 @@ pub async fn check_avy_geometry(point: &Point, avy_data: &AvyHashMap) ->
     }
     if area.properties.start_date.is_none()
     {
-        return Err(NACError::NoForecastError(id.clone()));
+        return Err(NACError::NoForecastError);
     }
-    Ok(Some((id.clone(), area.properties.clone())))
+    Ok(Some(area.properties.clone()))
 }
 
-// checks if there is a new avalanche forecast for a given UserPoint
+// checks if there is a new avalanche forecast at a UserPoint's location
 // if new forecast is found, updates UserPoint.avy with the new forecast
 // returns True if UserPoint.avy is updated
-pub async fn check_avy_id(user_point: &mut UserPoint, avy_data: &AvyHashMap) -> bool
+pub async fn check_avy_tracker(user_point: &mut UserPoint, avy_data: &AvalancheData) -> bool
 {
-    let Some(area) = user_point.avy_id.as_ref()
-        .and_then(|id| avy_data.lookup_map.get(id))
+    // no zone, an off season zone, or a zone without a current forecast
+    // has nothing new to report
+    let Ok(Some(current)) = check_avy_geometry(&user_point.point, avy_data).await
     else
     {
         return false;
     };
 
-    // a zone without a current forecast has nothing new to report
-    if area.properties.off_season == Some(true) || area.properties.start_date.is_none()
-    {
-        return false;
-    }
-
-    // each new forecast is issued with a new start_date
-    let is_new = user_point.avy.as_ref()
-        .map_or(true, |avy| avy.start_date != area.properties.start_date);
+    // any changed field counts as a new forecast, since avalanche
+    // information is safety critical it is better to over report
+    let is_new = user_point.avy.as_ref() != Some(&current);
 
     if is_new
     {
-        user_point.avy = Some(area.properties.clone());
+        user_point.avy = Some(current);
     }
     is_new
 }
