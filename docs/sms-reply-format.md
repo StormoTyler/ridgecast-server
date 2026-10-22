@@ -436,13 +436,16 @@ Avy danger 4 High (was 3), Mt Hood
 Tracking ended
 ```
 
-A reply with notices, to a request that set `track_avy` and `daily_forecast`
-for a location whose avalanche center is in its off season and whose time
-zone NWS did not report:
+A reply with notices, to a request named `Turnagain` that set `track_avy` and
+`daily_forecast` for a location whose avalanche center is in its off season
+and whose time zone NWS did not report. The avalanche tracker is still
+created, so the first forecast after the season starts is sent as an
+avalanche notification:
 
 ```
 (1/1)
 Avy: center is in its off season
+Tracking Turnagain: avy until Fri 10/9 10AM
 Daily forecast unavailable
 Tue: high 68F, low 47F. Wind NW 8mph. Precip 10%
 ```

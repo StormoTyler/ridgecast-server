@@ -456,8 +456,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     };
 
     let mut avy_notice = None;
-    // an off season zone is not tracked
-    let mut track_avy = forecast_vars.track_avy;
+    let track_avy = forecast_vars.track_avy;
     let avy = if forecast_vars.track_avy
     {
         let checked = match load_avy(db).await
@@ -476,10 +475,13 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
                 avy_notice = Some("There is no current avalanche forecast for this location.");
                 None
             }
+            // the zone is still tracked, so the first forecast
+            // after its season starts is reported as new
             Err(NACError::OffSeasonError) =>
             {
+                // TODO: when a tracker is created, notify the user that the zone is in
+                // its off season and that it will still be tracked
                 avy_notice = Some("The avalanche center for this location is in its off season.");
-                track_avy = false;
                 None
             }
             // avalanche data could not be read

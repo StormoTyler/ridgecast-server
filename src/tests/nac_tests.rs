@@ -226,3 +226,27 @@ async fn test_avy_tracker_with_earlier_start_date()
     // the whole forecast is replaced, not just its start_date
     assert_eq!(tracker.avy, Some(current));
 }
+
+#[tokio::test]
+async fn test_avy_tracker_with_no_stored_forecast()
+{
+    // a tracker without a stored forecast still checks for one,
+    // and the first forecast found counts as new
+    let avy = load_avy();
+    let mut tracker = make_tracker(None);
+
+    assert!(nac::check_avy_tracker(&mut tracker, &avy).await);
+    assert_eq!(tracker.avy, Some(current_forecast(&avy)));
+}
+
+#[tokio::test]
+async fn test_avy_tracker_in_off_season_zone()
+{
+    // Chugach State Park is off season, so there is no forecast to store
+    let avy = load_avy();
+    let mut tracker = make_tracker(None);
+    tracker.point = make_point(61.13, -149.53);
+
+    assert!(!nac::check_avy_tracker(&mut tracker, &avy).await);
+    assert!(tracker.avy.is_none());
+}
