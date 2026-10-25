@@ -70,7 +70,8 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
     };
     let alerts = Alerts { features: raw.parse("NWS alerts") };
 
-    let alerts_sorted = sort_alerts(alerts);
+    let mut alerts_sorted = sort_alerts(alerts);
+    alerts_sorted.fetched_at = chrono::Utc::now();
     println!("{:?}", alerts_sorted);
     Ok(alerts_sorted)
 }

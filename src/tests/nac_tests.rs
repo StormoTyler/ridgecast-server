@@ -20,7 +20,7 @@ fn load_avy() -> AvalancheData
     let raw: RawFeatures = serde_json::from_str(TEST_DATA)
         .expect("test data should be a geojson feature collection");
     let features: Vec<AvyArea> = raw.parse("NAC test data");
-    AvalancheData { features: nac::build_avy_map(features) }
+    AvalancheData { features: nac::build_avy_map(features), fetched_at: chrono::Utc::now() }
 }
 
 // the zone with the given name, zone names are unique in the test data

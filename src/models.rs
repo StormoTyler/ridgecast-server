@@ -175,6 +175,10 @@ pub struct AlertsSorted
    pub with_geometry: Vec<Alert>,
    // alerts without geometry
    pub by_same_code: HashMap<String, Vec<Alert>>,
+   // when the alerts were fetched from NWS. defaults to the Unix epoch, so a
+   // snapshot stored without it is treated as stale
+   #[serde(default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+   pub fetched_at: DateTime<Utc>,
 }
 
 impl AlertsSorted
@@ -332,6 +336,10 @@ impl NWSError
 pub struct AvalancheData
 {
     pub features: Vec<AvyArea>,
+    // when the zones were fetched from NAC. defaults to the Unix epoch, so a
+    // snapshot stored without it is treated as stale
+    #[serde(default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub fetched_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

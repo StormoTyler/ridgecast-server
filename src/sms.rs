@@ -6,13 +6,13 @@ use thiserror::Error;
 
 use chrono::{DateTime, Days, TimeZone, Utc};
 
-use mongodb::bson::doc;
 use serde::Serialize;
 
 // local modules
 use crate::{APIError, add_alert_tracker};
 use crate::daily_forecast;
 use crate::database::DB;
+use crate::snapshots::{self, Snapshot};
 use crate::handlers::{nac, nws};
 use crate::handlers::nac::NACError;
 use crate::models::{Alert, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
@@ -311,6 +311,10 @@ pub struct SmsForecastResponse
     // None when the request set the no_forecast flag
     pub forecast: Option<RequestedForecast>,
     pub alerts: Vec<Alert>,
+    // set when the alerts are older than snapshots::ALERTS_MAX_AGE because
+    // they could not be refreshed from NWS
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alerts_stale_notice: Option<&'static str>,
     // the avalanche zone containing the point, None outside every zone.
     // without track_avy it is only included at danger level 3 or higher
     pub avy: Option<AvyProperties>,
@@ -318,6 +322,10 @@ pub struct SmsForecastResponse
     // or for any request whose avalanche data could not be read
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avy_notice: Option<&'static str>,
+    // set when the avalanche data is older than snapshots::AVY_MAX_AGE because
+    // it could not be refreshed from NAC
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avy_stale_notice: Option<&'static str>,
     // explains why a daily_forecast request did not get a daily forecast tracker
     #[serde(skip_serializing_if = "Option::is_none")]
     pub daily_notice: Option<&'static str>,
@@ -418,16 +426,9 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     let SmsRequest { lat, lon, tracker_duration, forecast_length, tracker_name, forecast_vars } = request;
     let (lat, lon) = (*lat, *lon);
 
-    let alerts = match db.alerts_collection.find_one(doc! {}).await
-    {
-        Ok(Some(alerts)) => alerts,
-        Ok(None) => return Err(APIError::NoAlertsStored),
-        Err(e) =>
-        {
-            eprintln!("get_requested_forecast: failed to read alerts from database: {e}");
-            return Err(APIError::DatabaseError);
-        }
-    };
+    // fails the request only when NWS can't be reached and no alerts are stored
+    let Snapshot { data: alerts, stale: alerts_stale } = snapshots::load_alerts(db).await?;
+    let alerts_stale_notice = alerts_stale.then_some("Alerts may be out of date.");
 
     let (point, forecast, active_alerts) = if forecast_vars.no_forecast
     {
@@ -457,16 +458,38 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     };
 
     let mut avy_notice = None;
+    let mut avy_stale_notice = None;
     let track_avy = forecast_vars.track_avy;
-    let avy = if forecast_vars.track_avy
+    // the user may not have asked about avalanches, so unavailable avalanche
+    // data should not fail the rest of the request
+    let avy_data = match snapshots::load_avy(db).await
     {
-        let checked = match load_avy(db).await
+        Ok(Snapshot { data, stale }) =>
         {
-            Ok(avy_data) => nac::check_avy_geometry(&point, &avy_data).await,
-            // no stored data or a database error, reported below as a failed check
-            Err(_) => Err(NACError::CheckError),
-        };
-        match checked
+            // sent with or without track_avy, since stale data could miss
+            // a danger level of 3 or higher
+            if stale
+            {
+                avy_stale_notice = Some("Avalanche data may be out of date.");
+            }
+            Some(data)
+        }
+        Err(e) =>
+        {
+            eprintln!("get_requested_forecast: avalanche data unavailable: {e}");
+            None
+        }
+    };
+    let avy = match &avy_data
+    {
+        // the notice is sent with or without track_avy, since
+        // danger level 3 or higher could not be ruled out
+        None =>
+        {
+            avy_notice = Some("Could not retrieve avalanche forecast data at this time.");
+            None
+        }
+        Some(avy_data) if track_avy => match nac::check_avy_geometry(&point, avy_data).await
         {
             Ok(zone) => zone,
             // the zone is still tracked with no stored forecast,
@@ -485,30 +508,15 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
                 avy_notice = Some("The avalanche center for this location is in its off season.");
                 None
             }
-            // avalanche data could not be read
+            // the zone check could not be completed
             Err(e) =>
             {
                 eprintln!("get_requested_forecast: {e}");
                 avy_notice = Some("Could not retrieve avalanche forecast data at this time.");
                 None
             }
-        }
-    }
-    else
-    {
-        // the user did not ask about avalanches, so unreadable avalanche
-        // data should not fail the rest of the request. the notice is still
-        // sent, since danger level 3 or higher could not be ruled out
-        match get_avy_no_tracker(&point, db).await
-        {
-            Ok(avy) => avy,
-            Err(e) =>
-            {
-                eprintln!("get_requested_forecast: avalanche check failed: {e}");
-                avy_notice = Some("Could not retrieve avalanche forecast data at this time.");
-                None
-            }
-        }
+        },
+        Some(avy_data) => get_avy_no_tracker(&point, avy_data).await,
     };
 
     let time_added = chrono::Utc::now();
@@ -560,7 +568,8 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         }
     }
 
-    Ok(SmsForecastResponse { point, forecast, alerts: active_alerts, avy, avy_notice, daily_notice })
+    Ok(SmsForecastResponse { point, forecast, alerts: active_alerts, alerts_stale_notice,
+        avy, avy_notice, avy_stale_notice, daily_notice })
 }
 
 // maps an NWS error the same way the route handlers do
@@ -574,43 +583,26 @@ fn nws_error(call: &str, lat: f32, lon: f32, e: NWSError, fallback: APIError) ->
     if e.is_timeout() { APIError::UpstreamTimeout } else { fallback }
 }
 
-// reads the stored avalanche zones
-async fn load_avy(db: &DB) -> Result<AvalancheData, APIError>
+// returns the forecast of the avalanche zone containing the point, if any
+async fn find_avy_zone(point: &Point, avy_data: &AvalancheData) -> Option<AvyProperties>
 {
-    match db.avy_collection.find_one(doc! {}).await
+    match nac::check_avy_geometry(point, avy_data).await
     {
-        Ok(Some(avy)) => Ok(avy),
-        Ok(None) => Err(APIError::NoAvyStored),
-        Err(e) =>
-        {
-            eprintln!("load_avy: failed to read avalanche data from database: {e}");
-            Err(APIError::DatabaseError)
-        }
-    }
-}
-
-// returns the forecast of the stored avalanche zone containing the point, if any
-async fn find_avy_zone(point: &Point, db: &DB) -> Result<Option<AvyProperties>, APIError>
-{
-    let avy = load_avy(db).await?;
-
-    match nac::check_avy_geometry(point, &avy).await
-    {
-        Ok(zone) => Ok(zone),
+        Ok(zone) => zone,
         // no zone, or a zone without a current forecast, is reported as no zone
         Err(e) =>
         {
             eprintln!("find_avy_zone: {e}");
-            Ok(None)
+            None
         }
     }
 }
 
 // checks if the point is in any avalanche forecast zone
 // returns the avy_properties for the area if danger_level >= 3
-async fn get_avy_no_tracker(point: &Point, db: &DB) -> Result<Option<AvyProperties>, APIError>
+async fn get_avy_no_tracker(point: &Point, avy_data: &AvalancheData) -> Option<AvyProperties>
 {
-    let zone = find_avy_zone(point, db).await?;
+    let zone = find_avy_zone(point, avy_data).await;
     // NAC rates danger 1 (low) to 5 (extreme), 3 is considerable
-    Ok(zone.filter(|properties| properties.danger_level.is_some_and(|level| level >= 3)))
+    zone.filter(|properties| properties.danger_level.is_some_and(|level| level >= 3))
 }

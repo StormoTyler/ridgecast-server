@@ -100,7 +100,11 @@ pub async fn get_avy() -> Result<AvalancheData, NACError>
     //println!("{:?}", avy);
 
     // wrap the zones so the snapshot is stored as a single document
-    Ok(AvalancheData { features: build_avy_map(raw.parse("NAC map layer")) })
+    Ok(AvalancheData
+    {
+        features: build_avy_map(raw.parse("NAC map layer")),
+        fetched_at: chrono::Utc::now(),
+    })
 }
 
 // converts each zone's dates to local time and its geometry to geo_types,
