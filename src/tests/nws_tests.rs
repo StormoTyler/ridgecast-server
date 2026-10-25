@@ -138,8 +138,10 @@ fn sort_alerts_keeps_every_alert()
     let alerts = load_alerts();
     let all_ids: HashSet<String> = raw_feature_ids(true)
         .union(&raw_feature_ids(false)).cloned().collect();
+    // unmatched alerts are kept too, they just can't be matched to a location
     let sorted_ids: HashSet<&str> = ids(&alerts.with_geometry).into_iter()
         .chain(alerts.by_same_code.values().flat_map(|bucket| ids(bucket)))
+        .chain(ids(&alerts.unmatched))
         .collect();
 
     let skipped: Vec<&String> = all_ids.iter()
@@ -148,4 +150,61 @@ fn sort_alerts_keeps_every_alert()
     assert!(skipped.is_empty(),
         "{} of {} alerts were skipped by sort_alerts: {skipped:?}",
         skipped.len(), all_ids.len());
+}
+
+// an alert built from raw NWS json, so its geometry deserializes the same way
+fn make_alert(id: &str, geometry: serde_json::Value, same_codes: &[&str]) -> Alert
+{
+    serde_json::from_value(serde_json::json!({
+        "id": id,
+        "geometry": geometry,
+        "properties": {
+            "event": "Test Warning",
+            "geocode": { "SAME": same_codes },
+        },
+    })).expect("test alert should deserialize")
+}
+
+#[test]
+fn sort_alerts_keeps_alert_without_geometry_or_same_code_in_unmatched()
+{
+    let alert = make_alert("no-location", serde_json::Value::Null, &[]);
+    let alerts = nws::sort_alerts(Alerts { features: vec![alert] });
+
+    assert_eq!(ids(&alerts.unmatched), vec!["no-location"]);
+    assert!(alerts.with_geometry.is_empty());
+    assert!(alerts.by_same_code.is_empty());
+}
+
+#[test]
+fn sort_alerts_matches_unconvertible_geometry_by_same_code()
+{
+    // a point can't be converted to a polygon, so the SAME codes are used instead
+    let point = serde_json::json!({ "type": "Point", "coordinates": [-123.0, 44.0] });
+    let alert = make_alert("point-geometry", point, &["041039"]);
+    let alerts = nws::sort_alerts(Alerts { features: vec![alert] });
+
+    assert_eq!(ids(alerts.get_same_code_alerts("041039")), vec!["point-geometry"]);
+    assert!(alerts.with_geometry.is_empty());
+    assert!(alerts.unmatched.is_empty());
+}
+
+#[test]
+fn sort_alerts_keeps_unconvertible_geometry_without_same_code_in_unmatched()
+{
+    let point = serde_json::json!({ "type": "Point", "coordinates": [-123.0, 44.0] });
+    let alert = make_alert("point-no-same", point, &[]);
+    let alerts = nws::sort_alerts(Alerts { features: vec![alert] });
+
+    assert_eq!(ids(&alerts.unmatched), vec!["point-no-same"]);
+    assert!(alerts.with_geometry.is_empty());
+    assert!(alerts.by_same_code.is_empty());
+}
+
+#[test]
+fn sort_alerts_test_data_has_no_unmatched_alerts()
+{
+    // every alert in the saved response has geometry or a SAME code
+    let alerts = load_alerts();
+    assert!(alerts.unmatched.is_empty(), "unexpected unmatched alerts: {:?}", ids(&alerts.unmatched));
 }

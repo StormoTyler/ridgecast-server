@@ -78,14 +78,16 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
 
 // buckets alerts by whether they have usable polygon geometry,
 // so check_alerts can match by polygon or by SAME code
+// an alert with neither can't be matched to a location, so it is
+// logged and kept in unmatched instead of being dropped
 pub fn sort_alerts(mut alerts: Alerts) -> AlertsSorted
 {
     let mut alerts_sorted = AlertsSorted::default();
 
-    for alert in alerts.features.iter_mut()                                                
-    {                                                                                      
-        match &alert.geometry                                             
-        {                                                                                  
+    for alert in alerts.features.iter_mut()
+    {
+        match &alert.geometry
+        {
             Some(GeometryTypes::Geojson(geo)) =>
             {
                 // the geojson type tag decides which geo_types struct to convert into
@@ -106,34 +108,54 @@ pub fn sort_alerts(mut alerts: Alerts) -> AlertsSorted
                         alert.geometry = Some(new_geo);
                         alerts_sorted.add_geometry_alert(alert);
                     }
-                    // alerts without a SAME code are dropped here
-                    Err(_e) =>
+                    Err(e) =>
                     {
-                        for same_code in alert.properties.geocode.same.iter()
-                        {
-                            alerts_sorted.add_same_code_alert(same_code.to_string(), alert);
-                        }
+                        eprintln!("sort_alerts: alert {} ({}): geometry conversion failed, \
+                            matching by SAME code instead: {e}", alert_id(alert), alert_event(alert));
+                        add_by_same_code(&mut alerts_sorted, alert);
                     }
-                }                                                                          
-            }                                                                              
-            Some(GeometryTypes::Polygon(geo)) =>
-            {
-                alerts_sorted.add_geometry_alert(alert);
-            }
-            Some(GeometryTypes::MultiPolygon(geo)) =>
-            {
-                alerts_sorted.add_geometry_alert(alert);
-            }
-            None =>
-            {
-                for same_code in alert.properties.geocode.same.iter()
-                {
-                    alerts_sorted.add_same_code_alert(same_code.to_string(), alert);
                 }
             }
+            Some(GeometryTypes::Polygon(_)) | Some(GeometryTypes::MultiPolygon(_)) =>
+            {
+                alerts_sorted.add_geometry_alert(alert);
+            }
+            None => add_by_same_code(&mut alerts_sorted, alert),
         }
     }
+
+    if !alerts_sorted.unmatched.is_empty()
+    {
+        eprintln!("sort_alerts: {} alerts have no usable geometry or SAME code \
+            and can't be matched to a location", alerts_sorted.unmatched.len());
+    }
     alerts_sorted
+}
+
+// files an alert under each of its SAME codes, or in unmatched if it has none
+fn add_by_same_code(alerts_sorted: &mut AlertsSorted, alert: &Alert)
+{
+    if alert.properties.geocode.same.is_empty()
+    {
+        eprintln!("sort_alerts: alert {} ({}) has no usable geometry or SAME code",
+            alert_id(alert), alert_event(alert));
+        alerts_sorted.unmatched.push(alert.clone());
+        return;
+    }
+    for same_code in alert.properties.geocode.same.iter()
+    {
+        alerts_sorted.add_same_code_alert(same_code.to_string(), alert);
+    }
+}
+
+fn alert_id(alert: &Alert) -> &str
+{
+    alert.id.as_deref().unwrap_or("without id")
+}
+
+fn alert_event(alert: &Alert) -> &str
+{
+    alert.properties.event.as_deref().unwrap_or("unknown event")
 }
 
 pub fn check_alerts(alerts: &AlertsSorted, point: &Point) -> Vec<Alert>

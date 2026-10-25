@@ -175,6 +175,10 @@ pub struct AlertsSorted
    pub with_geometry: Vec<Alert>,
    // alerts without geometry
    pub by_same_code: HashMap<String, Vec<Alert>>,
+   // alerts with neither usable geometry nor a SAME code, which can't be
+   // matched to a location. kept so they are visible instead of dropped
+   #[serde(default)]
+   pub unmatched: Vec<Alert>,
    // when the alerts were fetched from NWS. defaults to the Unix epoch, so a
    // snapshot stored without it is treated as stale
    #[serde(default, with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]

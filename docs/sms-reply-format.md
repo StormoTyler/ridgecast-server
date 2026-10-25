@@ -138,6 +138,16 @@ listed in the order NWS returns them.
 If the alert lines would not fit in the first message, the server lists as
 many as fit and ends with `!+2 more alerts` (the number of alerts left out).
 
+```
+!Alerts may be out of date
+```
+
+Added after the alert lines when the stored alerts are more than 15 minutes
+old and could not be refreshed from NWS, matching `alerts_stale_notice` in
+`src/sms.rs`. It is included even when there are no alert lines, since
+out-of-date alerts can miss a new alert. It stays in the first message: when
+the alert lines are cut short, the server leaves room for it.
+
 ### Avalanche
 
 ```
@@ -158,11 +168,14 @@ Avy: center is in its off season
 | `Avy: no current forecast` | The zone has no current avalanche forecast |
 | `Avy: center is in its off season` | The zone's avalanche center is in its off season |
 | `Avy: data unavailable, try later` | Avalanche data could not be read |
+| `Avy: data may be out of date` | The stored avalanche data is more than 2 hours old and could not be refreshed from NAC, matching `avy_stale_notice` in `src/sms.rs` |
 
 Without `track_avy`, the line is included only at danger level 3 or higher,
 as `get_requested_forecast` already does. The `Avy: data unavailable, try
 later` notice is included with or without `track_avy`, since a danger level of
-3 or higher cannot be ruled out when the data cannot be read.
+3 or higher cannot be ruled out when the data cannot be read. For the same
+reason, `Avy: data may be out of date` is included with or without
+`track_avy`. It follows the danger line or other notice when there is one.
 
 ### Tracker
 
@@ -297,8 +310,9 @@ The same local time as the full format, written shorter:
 | Line | Example | Meaning |
 |---|---|---|
 | Alert | `!Winter Storm Warning til We7 6PM` | `!`, the NWS event name, `til`, and the expiry time. If the alerts do not fit, they are replaced with `!+<n> alerts` |
+| Alerts stale notice | `!alerts may be old` | The same notice as the full format |
 | Avalanche | `AV3 Considerable` | `AV`, the danger level, and the danger rating |
-| Avalanche notice | `AV no forecast`, `AV off season`, `AV unavailable` | The same notices as the full format |
+| Avalanche notice | `AV no forecast`, `AV off season`, `AV unavailable`, `AV may be old` | The same notices as the full format |
 | Forecast day | `Tu 34/22 SW25 P90 R0.85 S11` | See below |
 
 ### Brief forecast day
