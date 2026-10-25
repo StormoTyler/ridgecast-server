@@ -314,7 +314,8 @@ pub struct SmsForecastResponse
     // the avalanche zone containing the point, None outside every zone.
     // without track_avy it is only included at danger level 3 or higher
     pub avy: Option<AvyProperties>,
-    // explains a missing avy for a track_avy request whose forecast could not be given
+    // explains a missing avy for a track_avy request whose forecast could not be given,
+    // or for any request whose avalanche data could not be read
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avy_notice: Option<&'static str>,
     // explains why a daily_forecast request did not get a daily forecast tracker
@@ -495,12 +496,18 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     }
     else
     {
-        // the user did not ask about avalanches, so missing avalanche
-        // data should not fail the rest of the request
+        // the user did not ask about avalanches, so unreadable avalanche
+        // data should not fail the rest of the request. the notice is still
+        // sent, since danger level 3 or higher could not be ruled out
         match get_avy_no_tracker(&point, db).await
         {
-            Err(APIError::NoAvyStored) => None,
-            result => result?,
+            Ok(avy) => avy,
+            Err(e) =>
+            {
+                eprintln!("get_requested_forecast: avalanche check failed: {e}");
+                avy_notice = Some("Could not retrieve avalanche forecast data at this time.");
+                None
+            }
         }
     };
 

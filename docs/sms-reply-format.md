@@ -160,7 +160,9 @@ Avy: center is in its off season
 | `Avy: data unavailable, try later` | Avalanche data could not be read |
 
 Without `track_avy`, the line is included only at danger level 3 or higher,
-as `get_requested_forecast` already does.
+as `get_requested_forecast` already does. The `Avy: data unavailable, try
+later` notice is included with or without `track_avy`, since a danger level of
+3 or higher cannot be ruled out when the data cannot be read.
 
 ### Tracker
 
