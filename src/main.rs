@@ -87,6 +87,17 @@ impl IntoResponse for APIError
 async fn main() -> Result<(), Box<dyn std::error::Error>>                     
 {                                                                             
     let db = DB::init().await?;
+
+    // refresh the snapshots in the background, so startup doesn't wait on NWS or NAC.
+    // a failure is only logged, the loaders refresh missing or stale snapshots on use
+    let refresh_db = db.clone();
+    tokio::spawn(async move {
+        let (alerts, avy) = tokio::join!(
+            snapshots::refresh_alerts(&refresh_db),
+            snapshots::refresh_avy(&refresh_db));
+        if let Err(e) = alerts { eprintln!("startup: alerts refresh failed: {e}"); }
+        if let Err(e) = avy { eprintln!("startup: avalanche refresh failed: {e}"); }
+    });
                                                                               
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 5001));            
     println!("Listening on: {}", addr);                                       
