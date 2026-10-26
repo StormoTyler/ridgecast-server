@@ -1,7 +1,11 @@
-use mongodb::{bson::doc, error::Result, options::ClientOptions, Client, Collection, IndexModel};
+use std::time::Duration;
+use mongodb::{bson::doc, error::Result, options::{ClientOptions, IndexOptions}, Client, Collection, IndexModel};
 
 // local modules
 use crate::models::{AlertsSorted, UserPoint, AvalancheData, InvalidAlert, InvalidAvyArea};
+
+// debugging records are deleted this long after an alert or zone last failed validation
+const DEBUG_RECORD_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 #[derive(Clone, Debug)]
 pub struct DB {
@@ -49,6 +53,16 @@ impl DB {
         invalid_avy_areas_collection
             .create_index(IndexModel::builder().keys(doc! { "zone_name": 1, "center": 1 }).build())
             .await?;
+
+        // mongo deletes debugging records once last_seen is older than DEBUG_RECORD_TTL.
+        // every refresh that sees the problem again updates last_seen, so only
+        // problems NWS or NAC no longer send expire
+        let ttl_index = || IndexModel::builder()
+            .keys(doc! { "last_seen": 1 })
+            .options(IndexOptions::builder().expire_after(DEBUG_RECORD_TTL).build())
+            .build();
+        invalid_alerts_collection.create_index(ttl_index()).await?;
+        invalid_avy_areas_collection.create_index(ttl_index()).await?;
 
         println!("Pinged your database. Successfully connected to MongoDB!");
 
