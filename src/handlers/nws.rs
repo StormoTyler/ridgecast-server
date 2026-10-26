@@ -76,7 +76,6 @@ pub async fn get_alerts() -> Result<(AlertsSorted, Vec<InvalidAlert>, SkippedFea
 
     let mut alerts_sorted = sort_alerts(alerts);
     alerts_sorted.fetched_at = chrono::Utc::now();
-    println!("{:?}", alerts_sorted);
     Ok((alerts_sorted, invalid_alerts, skipped))
 }
 
@@ -235,10 +234,6 @@ pub fn check_alerts(alerts: &AlertsSorted, point: &Point) -> Vec<Alert>
     // alerts without geometry: direct hash lookup by the point's SAME code
     let mut checked: Vec<Alert> =
         alerts.get_same_code_alerts(&point.properties.nwr.same_code).to_vec();
-    if !checked.is_empty()
-    {
-        println!("alert matched from samecode");
-    }
 
     // alerts with geometry: check whether the point is inside the polygon
     // or on its boundary, so a point on the edge of an alert area still matches
