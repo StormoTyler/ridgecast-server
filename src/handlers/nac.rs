@@ -10,12 +10,15 @@ use thiserror::Error;
 use geojson;
 use geo;
 use geo::Intersects;
+use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 
 // local modules
 use crate::models::{AvalancheData, AvyArea, AvyProperties, Point, 
     DateTimeTypes, GeometryTypes, RawFeatures, UserPoint, InvalidAvyArea};
 use crate::geometry::convert_geometry;
+use crate::tracking::{self, Validity};
+use crate::snapshots::Snapshot;
 
 const BASE_URL: &str = "https://api.avalanche.org/v2/public/products/map-layer";
 
@@ -42,6 +45,8 @@ pub enum NACError
     CheckError,
     #[error("no current avalanche forecast available")]
     NoForecastError,
+    #[error("the avalanche forecast has passed its end_date")]
+    ExpiredForecastError,
     #[error("relevant avalanche center is in its off season")]
     OffSeasonError,
 }
@@ -162,10 +167,12 @@ pub fn build_avy_map(mut features: Vec<AvyArea>) -> (Vec<AvyArea>, Vec<InvalidAv
     (features, invalid_areas)
 }
 
-// checks whether a point intersects with an avalanche forecast zone 
+// checks whether a point intersects with an avalanche forecast zone
 // and returns the area name, avalanche center, and forecast danger
-// errors if the zone's center is in its off season or the zone has no current forecast
-pub async fn check_avy_geometry(point: &Point, avy_data: &AvalancheData) ->
+// errors if the zone's center is in its off season, or the zone has no valid
+// forecast: one with a start_date and an end_date that hasn't passed.
+// a forecast that hasn't started yet is valid
+pub async fn check_avy_geometry(point: &Point, avy_data: &AvalancheData, now: DateTime<Utc>) ->
     Result<Option<AvyProperties>, NACError>
 {
     let coordinates = point.geometry.coordinates;
@@ -188,33 +195,95 @@ pub async fn check_avy_geometry(point: &Point, avy_data: &AvalancheData) ->
     {
         return Err(NACError::OffSeasonError);
     }
-    if area.properties.start_date.is_none()
+    let start = area.properties.start_date.as_ref().map(DateTimeTypes::to_utc);
+    let end = area.properties.end_date.as_ref().map(DateTimeTypes::to_utc);
+    match tracking::validity(start, end, now)
     {
-        return Err(NACError::NoForecastError);
+        Validity::Current | Validity::NotStarted => Ok(Some(area.properties.clone())),
+        Validity::Expired => Err(NACError::ExpiredForecastError),
+        Validity::NoStart | Validity::NoEnd => Err(NACError::NoForecastError),
     }
-    Ok(Some(area.properties.clone()))
 }
 
-// checks if there is a new avalanche forecast at a UserPoint's location
-// if new forecast is found, updates UserPoint.avy with the new forecast
-// returns True if UserPoint.avy is updated
-pub async fn check_avy_tracker(user_point: &mut UserPoint, avy_data: &AvalancheData) -> bool
+// what check_avy_tracker found, for the scheduler to act on
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AvyTrackerUpdate
 {
-    // no zone, an off season zone, or a zone without a current forecast
-    // has nothing new to report
-    let Ok(Some(current)) = check_avy_geometry(&user_point.point, avy_data).await
-    else
-    {
-        return false;
-    };
+    // nothing to send or save
+    Unchanged,
+    // UserPoint.avy was replaced with a new forecast, send it and save the tracker
+    NewForecast,
+    // the stored forecast is no longer valid, send "Avy: no current forecast" and save the tracker
+    ForecastLost,
+    // the stored forecast was lost because the center entered its off season,
+    // send the off season notice and save the tracker
+    OffSeason,
+    // the avalanche data is stale, so the stored forecast can't be confirmed and
+    // counts as lost. send "Avy: no current forecast" with the stale notice and save the tracker
+    DataStale,
+    // the stored forecast is valid again after a loss. the user already has it,
+    // so nothing is sent, but the tracker is saved so the next loss is notified
+    ForecastRestored,
+}
 
-    // any changed field counts as a new forecast, since avalanche
-    // information is safety critical it is better to over report
-    let is_new = user_point.avy.as_ref() != Some(&current);
-
-    if is_new
+// checks a tracker's avalanche zone against the current data.
+// UserPoint.avy keeps the last valid forecast the user was sent, and
+// UserPoint.avy_lost records that they were told it was lost, so a loss is
+// notified once and a forecast that returns unchanged is not sent again.
+// a stale snapshot counts as losing the forecast
+pub async fn check_avy_tracker(user_point: &mut UserPoint, snapshot: &Snapshot<AvalancheData>,
+    now: DateTime<Utc>) -> AvyTrackerUpdate
+{
+    if snapshot.stale
     {
-        user_point.avy = Some(current);
+        return record_avy_loss(user_point, AvyTrackerUpdate::DataStale);
     }
-    is_new
+    match check_avy_geometry(&user_point.point, &snapshot.data, now).await
+    {
+        Ok(Some(current)) =>
+        {
+            let was_lost = user_point.avy_lost.is_raised();
+            user_point.avy_lost.clear();
+            user_point.avy_off_season.clear();
+            // any changed field counts as a new forecast, since avalanche
+            // information is safety critical it is better to over report
+            if user_point.avy.as_ref() != Some(&current)
+            {
+                user_point.avy = Some(current);
+                AvyTrackerUpdate::NewForecast
+            }
+            else if was_lost
+            {
+                AvyTrackerUpdate::ForecastRestored
+            }
+            else
+            {
+                AvyTrackerUpdate::Unchanged
+            }
+        }
+        // sent once, even after another kind of loss was notified, since the
+        // center may not publish another forecast before the tracker ends
+        Err(NACError::OffSeasonError) =>
+        {
+            if user_point.avy.is_none() || !user_point.avy_off_season.raise()
+            {
+                return AvyTrackerUpdate::Unchanged;
+            }
+            user_point.avy_lost.raise();
+            AvyTrackerUpdate::OffSeason
+        }
+        // no zone, or no valid forecast
+        _ => record_avy_loss(user_point, AvyTrackerUpdate::ForecastLost),
+    }
+}
+
+// the user is only told about a loss when they had a valid forecast,
+// and only once until it is valid again
+fn record_avy_loss(user_point: &mut UserPoint, loss: AvyTrackerUpdate) -> AvyTrackerUpdate
+{
+    if user_point.avy.is_none() || !user_point.avy_lost.raise()
+    {
+        return AvyTrackerUpdate::Unchanged;
+    }
+    loss
 }

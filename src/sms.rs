@@ -460,6 +460,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         (point, Some(forecast), active_alerts)
     };
 
+    let now = chrono::Utc::now();
     let mut avy_notice = None;
     let mut avy_stale_notice = None;
     let track_avy = forecast_vars.track_avy;
@@ -492,12 +493,12 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
             avy_notice = Some("Could not retrieve avalanche forecast data at this time.");
             None
         }
-        Some(avy_data) if track_avy => match nac::check_avy_geometry(&point, avy_data).await
+        Some(avy_data) if track_avy => match nac::check_avy_geometry(&point, avy_data, now).await
         {
             Ok(zone) => zone,
             // the zone is still tracked with no stored forecast,
             // so its next forecast is reported as new
-            Err(NACError::NoForecastError) =>
+            Err(NACError::NoForecastError | NACError::ExpiredForecastError) =>
             {
                 avy_notice = Some("There is no current avalanche forecast for this location.");
                 None
@@ -506,8 +507,6 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
             // after its season starts is reported as new
             Err(NACError::OffSeasonError) =>
             {
-                // TODO: when a tracker is created, notify the user that the zone is in
-                // its off season and that it will still be tracked
                 avy_notice = Some("The avalanche center for this location is in its off season.");
                 None
             }
@@ -519,10 +518,10 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
                 None
             }
         },
-        Some(avy_data) => get_avy_no_tracker(&point, avy_data).await,
+        Some(avy_data) => get_avy_no_tracker(&point, avy_data, now).await,
     };
 
-    let time_added = chrono::Utc::now();
+    let time_added = now;
     let expires = time_added + chrono::Duration::hours((*tracker_duration).into());
     let mut daily_notice = None;
     // the first daily forecast, None when the request has no daily forecast
@@ -561,6 +560,8 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
             point: point.clone(),
             // only an avalanche tracker stores its zone's forecast
             avy: if track_avy { avy.clone() } else { None },
+            avy_lost: Default::default(),
+            avy_off_season: Default::default(),
             time_added,
             valid_duration: *tracker_duration,
             next_daily_forecast,
@@ -595,9 +596,9 @@ fn nws_error(call: &str, lat: f32, lon: f32, e: NWSError, fallback: APIError) ->
 }
 
 // returns the forecast of the avalanche zone containing the point, if any
-async fn find_avy_zone(point: &Point, avy_data: &AvalancheData) -> Option<AvyProperties>
+async fn find_avy_zone(point: &Point, avy_data: &AvalancheData, now: DateTime<Utc>) -> Option<AvyProperties>
 {
-    match nac::check_avy_geometry(point, avy_data).await
+    match nac::check_avy_geometry(point, avy_data, now).await
     {
         Ok(zone) => zone,
         // no zone, or a zone without a current forecast, is reported as no zone
@@ -611,9 +612,9 @@ async fn find_avy_zone(point: &Point, avy_data: &AvalancheData) -> Option<AvyPro
 
 // checks if the point is in any avalanche forecast zone
 // returns the avy_properties for the area if danger_level >= 3
-async fn get_avy_no_tracker(point: &Point, avy_data: &AvalancheData) -> Option<AvyProperties>
+async fn get_avy_no_tracker(point: &Point, avy_data: &AvalancheData, now: DateTime<Utc>) -> Option<AvyProperties>
 {
-    let zone = find_avy_zone(point, avy_data).await;
+    let zone = find_avy_zone(point, avy_data, now).await;
     // NAC rates danger 1 (low) to 5 (extreme), 3 is considerable
     zone.filter(|properties| properties.danger_level.is_some_and(|level| level >= 3))
 }

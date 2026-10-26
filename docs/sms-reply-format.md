@@ -82,7 +82,7 @@ space and the tracker's name, as given in the request (see
 | Reply | A request is answered | No | Elevation, alerts, avalanche, tracker, forecast days |
 | Daily forecast | A `daily_forecast` tracker reaches 6 AM | Yes | Elevation, alerts, avalanche, forecast days |
 | Alert notification | A tracker finds a new NWS alert | Yes | The new alerts |
-| Avalanche notification | A tracker finds a new avalanche forecast | Yes | Avalanche |
+| Avalanche notification | A tracker finds a new avalanche forecast, or loses the forecast it last sent | Yes | Avalanche |
 | Tracker ended | A tracker has ended | Yes | `Tracking ended` |
 | Error | A request could not be answered | No | Error line |
 | Help | A message that is not a request | No | Help text |
@@ -165,7 +165,7 @@ Avy: center is in its off season
 
 | Line | Meaning |
 |---|---|
-| `Avy: no current forecast` | The zone has no current avalanche forecast |
+| `Avy: no current forecast` | The zone has no valid avalanche forecast: none was published, it has no end time, or its end time has passed. A forecast that has not started yet is valid |
 | `Avy: center is in its off season` | The zone's avalanche center is in its off season |
 | `Avy: data unavailable, try later` | Avalanche data could not be read |
 | `Avy: data may be out of date` | The stored avalanche data is more than 2 hours old and could not be refreshed from NAC, matching `avy_stale_notice` in `src/sms.rs` |
@@ -176,6 +176,27 @@ later` notice is included with or without `track_avy`, since a danger level of
 3 or higher cannot be ruled out when the data cannot be read. For the same
 reason, `Avy: data may be out of date` is included with or without
 `track_avy`. It follows the danger line or other notice when there is one.
+
+An avalanche tracker sends a notification when it finds a forecast that differs
+from the last one it sent. When that forecast stops being valid, for any
+reason, the tracker sends one notification:
+
+- `Avy: center is in its off season` if the center entered its off season,
+  since it may not publish another forecast before the tracker ends.
+- `Avy: no current forecast` followed by `Avy: data may be out of date` if
+  the avalanche data is out of date. A tracker can't confirm its forecast from
+  out of date data, so this counts as losing it, even if the forecast's end
+  time hasn't passed.
+- `Avy: no current forecast` for any other reason, including the zone missing
+  from the NAC data.
+
+The loss is sent once. Later checks without a valid forecast send nothing,
+with one exception: `Avy: center is in its off season` is still sent once after
+any other kind of loss, since it tells the user forecasts may not resume before
+the tracker ends. Other losses after the off season notice send nothing. If
+the same forecast becomes valid again, nothing is sent, since the user already
+has it. A tracker that never had a valid forecast sends no loss notification,
+since its creation reply already gave the notice.
 
 ### Tracker
 

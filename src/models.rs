@@ -7,6 +7,9 @@ use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::json;
 use std::collections::HashMap;
 
+// local modules
+use crate::tracking::NoticeFlag;
+
 // user data models
 #[derive(Debug, Serialize, Deserialize, Clone)]           
 pub struct UserPoint       
@@ -18,7 +21,16 @@ pub struct UserPoint
    pub tracker_name: Option<String>,
    pub forecast_vars: ForecastVars,
    pub point: Point,
+   // the last valid avalanche forecast the user was sent
    pub avy: Option<AvyProperties>,
+   // set once the user is told avy is no longer valid, so the loss is
+   // notified once. trackers stored before this field read it as not raised
+   #[serde(default)]
+   pub avy_lost: NoticeFlag,
+   // set once the user is told the center entered its off season. kept apart from
+   // avy_lost, so the off season notice is still sent after any other kind of loss
+   #[serde(default)]
+   pub avy_off_season: NoticeFlag,
    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
    pub time_added: DateTime<Utc>,
    pub valid_duration: u32,
@@ -390,7 +402,7 @@ impl NWSError
 // end nws data models
 
 // data structures for NAC data
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AvalancheData
 {
     pub features: Vec<AvyArea>,
@@ -515,4 +527,18 @@ pub enum DateTimeTypes
     // don't get matched as naive when deserialized from mongo
     Aware(chrono::DateTime<FixedOffset>),
     Naive(chrono::NaiveDateTime),
+}
+
+impl DateTimeTypes
+{
+    // naive values are UTC: NAC dates have no offset, and build_avy_map
+    // leaves them naive only when the zone's timezone couldn't be read
+    pub fn to_utc(&self) -> DateTime<Utc>
+    {
+        match self
+        {
+            DateTimeTypes::Aware(aware) => aware.with_timezone(&Utc),
+            DateTimeTypes::Naive(naive) => naive.and_utc(),
+        }
+    }
 }

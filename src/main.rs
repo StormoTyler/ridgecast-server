@@ -32,6 +32,7 @@ mod sms;
 mod snapshots;
 mod daily_forecast;
 mod geometry;
+mod tracking;
 #[cfg(test)]
 mod tests;
 use crate::models::{UserPoint, Point, ForecastVars, ForecastProperties, PointGeometry, PointProperties,
@@ -141,6 +142,8 @@ async fn new_forecast(State(db): State<DB>) -> Response
         forecast_vars: ForecastVars::default(),
         point: forecast.point.clone(),
         avy: None,
+        avy_lost: Default::default(),
+        avy_off_season: Default::default(),
         time_added: chrono::Utc::now(),
         valid_duration: 0,
         next_daily_forecast: None,
