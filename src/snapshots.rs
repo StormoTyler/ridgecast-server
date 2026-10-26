@@ -3,13 +3,15 @@
 // and is only reported as stale when the refresh fails
 
 use chrono::{DateTime, TimeDelta, Utc};
-use mongodb::bson::doc;
+use mongodb::Collection;
+use mongodb::bson::{doc, Document};
+use serde::Serialize;
 
 // local modules
 use crate::APIError;
 use crate::database::DB;
 use crate::handlers::{nac, nws};
-use crate::models::{AlertsSorted, AvalancheData};
+use crate::models::{AlertsSorted, AvalancheData, InvalidAlert, InvalidAvyArea};
 
 // NWS updates alerts continuously
 pub const ALERTS_MAX_AGE: TimeDelta = TimeDelta::minutes(15);
@@ -32,7 +34,7 @@ pub fn is_stale(fetched_at: DateTime<Utc>, max_age: TimeDelta, now: DateTime<Utc
 // fetches the active alerts from NWS and replaces the stored snapshot
 pub async fn refresh_alerts(db: &DB) -> Result<AlertsSorted, APIError>
 {
-    let alerts = fetch_alerts().await?;
+    let alerts = fetch_alerts(db).await?;
     store_alerts(db, &alerts).await?;
     Ok(alerts)
 }
@@ -40,7 +42,7 @@ pub async fn refresh_alerts(db: &DB) -> Result<AlertsSorted, APIError>
 // fetches the avalanche zones from NAC and replaces the stored snapshot
 pub async fn refresh_avy(db: &DB) -> Result<AvalancheData, APIError>
 {
-    let avy = fetch_avy().await?;
+    let avy = fetch_avy(db).await?;
     store_avy(db, &avy).await?;
     Ok(avy)
 }
@@ -55,7 +57,7 @@ pub async fn load_alerts(db: &DB) -> Result<Snapshot<AlertsSorted>, APIError>
         return Ok(Snapshot { data: alerts, stale: false });
     }
 
-    let refresh_error = match fetch_alerts().await
+    let refresh_error = match fetch_alerts(db).await
     {
         Ok(alerts) =>
         {
@@ -94,7 +96,7 @@ pub async fn load_avy(db: &DB) -> Result<Snapshot<AvalancheData>, APIError>
         return Ok(Snapshot { data: avy, stale: false });
     }
 
-    let refresh_error = match fetch_avy().await
+    let refresh_error = match fetch_avy(db).await
     {
         Ok(avy) =>
         {
@@ -122,22 +124,92 @@ pub async fn load_avy(db: &DB) -> Result<Snapshot<AvalancheData>, APIError>
     }
 }
 
-async fn fetch_alerts() -> Result<AlertsSorted, APIError>
+// fetches the alerts from NWS and stores any that failed validation
+async fn fetch_alerts(db: &DB) -> Result<AlertsSorted, APIError>
 {
-    nws::get_alerts().await.map_err(|e|
+    let (alerts, invalid_alerts) = nws::get_alerts().await.map_err(|e|
     {
         eprintln!("fetch_alerts: failed to get alerts: {e}");
         if e.is_timeout() { APIError::UpstreamTimeout } else { APIError::AlertsError }
-    })
+    })?;
+
+    // the invalid alerts are only kept for debugging, so failing
+    // to store them doesn't fail the fetch
+    for invalid_alert in invalid_alerts.iter()
+    {
+        if let Err(e) = store_invalid_alert(db, invalid_alert).await
+        {
+            eprintln!("fetch_alerts: failed to store invalid alert {:?}: {e}",
+                invalid_alert.alert_id);
+        }
+    }
+    Ok(alerts)
 }
 
-async fn fetch_avy() -> Result<AvalancheData, APIError>
+// an alert with an id is upserted, so an alert that fails validation on every
+// refresh keeps one record
+async fn store_invalid_alert(db: &DB, invalid_alert: &InvalidAlert) -> mongodb::error::Result<()>
 {
-    nac::get_avy().await.map_err(|e|
+    let Some(alert_id) = &invalid_alert.alert_id
+    else
+    {
+        db.invalid_alerts_collection.insert_one(invalid_alert).await?;
+        return Ok(());
+    };
+    upsert_debug_record(&db.invalid_alerts_collection, doc! { "alert_id": alert_id }, invalid_alert).await
+}
+
+// a zone with a name is upserted by its name and center, so a zone that fails
+// on every refresh keeps one record
+async fn store_invalid_avy_area(db: &DB, invalid_area: &InvalidAvyArea) -> mongodb::error::Result<()>
+{
+    let Some(zone_name) = &invalid_area.zone_name
+    else
+    {
+        db.invalid_avy_areas_collection.insert_one(invalid_area).await?;
+        return Ok(());
+    };
+    let filter = doc! { "zone_name": zone_name, "center": invalid_area.center.as_deref() };
+    upsert_debug_record(&db.invalid_avy_areas_collection, filter, invalid_area).await
+}
+
+// upserts a debugging record that has first_seen and last_seen fields,
+// keeping the first_seen of an existing record and updating everything else
+async fn upsert_debug_record<T>(collection: &Collection<T>, filter: Document, record: &T)
+    -> mongodb::error::Result<()>
+where
+    T: Serialize + Send + Sync,
+{
+    let mut fields = bson::to_document(record)?;
+    let first_seen = fields.remove("first_seen");
+    collection
+        .update_one(filter, doc! { "$set": fields, "$setOnInsert": { "first_seen": first_seen } })
+        .upsert(true)
+        .await?;
+    Ok(())
+}
+
+// fetches the avalanche zones from NAC and stores any whose geometry
+// could not be converted
+async fn fetch_avy(db: &DB) -> Result<AvalancheData, APIError>
+{
+    let (avy, invalid_areas) = nac::get_avy().await.map_err(|e|
     {
         eprintln!("fetch_avy: failed to get avalanche data: {e}");
         if e.is_timeout() { APIError::UpstreamTimeout } else { APIError::NACError }
-    })
+    })?;
+
+    // the invalid zones are only kept for debugging, so failing
+    // to store them doesn't fail the fetch
+    for invalid_area in invalid_areas.iter()
+    {
+        if let Err(e) = store_invalid_avy_area(db, invalid_area).await
+        {
+            eprintln!("fetch_avy: failed to store invalid avalanche zone {:?}: {e}",
+                invalid_area.zone_name);
+        }
+    }
+    Ok(avy)
 }
 
 // swaps the stored snapshot in one operation, so a failed write

@@ -150,23 +150,77 @@ pub struct AlertData
    pub area_desc: Option<String>,                               
    pub effective: Option<chrono::DateTime<FixedOffset>>,        
    pub expires: Option<chrono::DateTime<FixedOffset>>,          
-   pub severtiy: Option<String>,                                
+   pub severity: Option<String>,                                
    pub certainty: Option<String>,                               
    pub urgency: Option<String>,                                 
    pub event: Option<String>,                                   
    pub headline: Option<String>,                                
    pub instruction: Option<String>,                             
-   #[serde(default)]
+   // a null geocode is read as empty, so the alert is kept and
+   // logged by nws::parse_alerts instead of failing to deserialize
+   #[serde(default, deserialize_with = "null_as_default")]
    pub geocode: Geocode,                                        
 }                                                            
                                                              
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]              
 pub struct Geocode                                           
 {                                                            
-    #[serde(rename = "SAME", default)]                                
+    // a null SAME list is read as empty, for the same reason as AlertData.geocode
+    #[serde(rename = "SAME", default, deserialize_with = "null_as_default")]
     pub same: Vec<String>,                                       
 }                                                            
+
+impl Geocode
+{
+    // NWS specifies SAME codes as matching ^\d{6}$
+    pub fn is_valid_same_code(code: &str) -> bool
+    {
+        code.len() == 6 && code.bytes().all(|byte| byte.is_ascii_digit())
+    }
+}
+
+// reads a null value as the type's default instead of failing
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
                                                              
+// an alert that failed validation in nws::parse_alerts, stored in the
+// invalid_alerts collection for debugging
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct InvalidAlert
+{
+    // the NWS alert id, which identifies the record across alert refreshes
+    pub alert_id: Option<String>,
+    pub reasons: Vec<InvalidAlertReason>,
+    // the SAME codes that didn't match ^\d{6}$
+    pub invalid_same_codes: Vec<String>,
+    // why the alert's geometry can't be used, if it can't
+    pub geometry_error_reason: Option<GeometryErrorReason>,
+    pub geometry_error: Option<String>,
+    // the alert as received from NWS, before invalid SAME codes and geometry were removed
+    pub alert: Alert,
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub first_seen: DateTime<Utc>,
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub last_seen: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum InvalidAlertReason
+{
+    // at least one SAME code didn't match ^\d{6}$
+    InvalidSameCodes,
+    // no SAME code was left after invalid ones were removed
+    NoSameCode,
+    // the geometry can't be used to match a point, so it was removed
+    InvalidGeometry,
+}
+
 // data structures for utilizing nws alerts data
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct AlertsSorted
@@ -346,13 +400,31 @@ pub struct AvalancheData
     pub fetched_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AvyArea
 {
     pub properties: AvyProperties,
     // if there is no geometry, the data is compromised
     // therefore an option is not used
     pub geometry: GeometryTypes,
+}
+
+// an avalanche zone whose geometry could not be converted in nac::build_avy_map,
+// stored in the invalid_avy_areas collection for debugging
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct InvalidAvyArea
+{
+    // the zone's name and center, which identify the record across refreshes
+    pub zone_name: Option<String>,
+    pub center: Option<String>,
+    pub reason: GeometryErrorReason,
+    pub error: String,
+    // the zone as received from NAC, with its geometry left unconverted
+    pub area: AvyArea,
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub first_seen: DateTime<Utc>,
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub last_seen: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -382,6 +454,22 @@ pub enum GeometryTypes
     Polygon(geo_types::Polygon),
     MultiPolygon(geo_types::MultiPolygon),
 }                                              
+
+// why geometry::convert_geometry rejected a geometry, stored in the debugging collections
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometryErrorReason
+{
+    // a geometry type other than Polygon or MultiPolygon
+    UnsupportedGeometryType,
+    // a position with fewer than 2 coordinates, which geojson's conversion panics on
+    MalformedCoordinates,
+    // no polygons, or an exterior ring with fewer than the 4 positions GeoJSON
+    // requires. it would convert, but could never contain a point
+    DegenerateGeometry,
+    // the conversion to geo_types returned an error
+    GeometryConversionFailed,
+}
 
 // shared data structures for parsing geojson feature collections
 // features are kept as raw json so one malformed feature

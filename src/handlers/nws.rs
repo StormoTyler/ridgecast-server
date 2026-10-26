@@ -5,7 +5,6 @@ use serde_json;
 use std::io;
 use thiserror::Error;
 use geojson;
-use geojson::GeometryValue;
 use geo::Intersects;
 use geo_types::{Polygon, line_string, point};
 use once_cell::sync::Lazy;
@@ -16,7 +15,9 @@ use crate::models::{Point, PointGeometry, PointProperties,
     NWR, Alerts, Alert, GeometryTypes,
     AlertData, Geocode, AlertsSorted,
     Forecast, Properties, Elevation, IntVec, TimeInt,
-    FloatVec, TimeFloat, ForecastResponse, NWSError, RawFeatures};
+    FloatVec, TimeFloat, ForecastResponse, NWSError, RawFeatures,
+    InvalidAlert, InvalidAlertReason};
+use crate::geometry::convert_geometry;
 
 const BASE_URL: &str = "https://api.weather.gov";
 
@@ -54,7 +55,8 @@ async fn fetch_alerts() -> Result<RawFeatures, NWSError>
     Ok(serde_json::from_value(alerts_json)?)
 }
 
-pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
+// returns the sorted alerts and the alerts that failed validation
+pub async fn get_alerts() -> Result<(AlertsSorted, Vec<InvalidAlert>), NWSError>
 {
     //println!("get_alerts called)");
 
@@ -68,12 +70,88 @@ pub async fn get_alerts() -> Result<AlertsSorted, NWSError>
         }
         result => result?,
     };
-    let alerts = Alerts { features: raw.parse("NWS alerts") };
+    let (alerts, invalid_alerts) = parse_alerts(raw);
 
     let mut alerts_sorted = sort_alerts(alerts);
     alerts_sorted.fetched_at = chrono::Utc::now();
     println!("{:?}", alerts_sorted);
-    Ok(alerts_sorted)
+    Ok((alerts_sorted, invalid_alerts))
+}
+
+// deserializes the alerts and checks their SAME codes against the NWS spec
+// codes that don't match ^\d{6}$ are logged and removed, since they can never
+// match a point, and every alert left without a SAME code is logged
+// geometry is converted for sort_alerts, geometry that can't be used is logged
+// and removed so the alert is matched by its SAME codes instead
+// returns the alerts and a record of each alert that failed validation
+pub fn parse_alerts(raw: RawFeatures) -> (Alerts, Vec<InvalidAlert>)
+{
+    let mut alerts = Alerts { features: raw.parse("NWS alerts") };
+    let mut invalid_alerts = Vec::new();
+    let now = chrono::Utc::now();
+
+    for alert in alerts.features.iter_mut()
+    {
+        // kept as received, in case the alert fails validation
+        let received = alert.clone();
+        let mut reasons = Vec::new();
+
+        let (valid, invalid): (Vec<String>, Vec<String>) =
+            std::mem::take(&mut alert.properties.geocode.same)
+            .into_iter()
+            .partition(|code| Geocode::is_valid_same_code(code));
+        if !invalid.is_empty()
+        {
+            eprintln!("parse_alerts: alert {} ({}): removing SAME codes that don't match \
+                ^\\d{{6}}$: {invalid:?}", alert_id(alert), alert_event(alert));
+            reasons.push(InvalidAlertReason::InvalidSameCodes);
+        }
+        alert.properties.geocode.same = valid;
+
+        if alert.properties.geocode.same.is_empty()
+        {
+            eprintln!("parse_alerts: alert {} ({}) has no SAME code",
+                alert_id(alert), alert_event(alert));
+            reasons.push(InvalidAlertReason::NoSameCode);
+        }
+
+        // converted here so geometry that can't be used is recorded,
+        // the alert then falls back to its SAME codes in sort_alerts
+        let mut geometry_error = None;
+        let mut geometry_error_reason = None;
+        if let Some(GeometryTypes::Geojson(geo)) = &alert.geometry
+        {
+            match convert_geometry(geo)
+            {
+                Ok(new_geo) => alert.geometry = Some(new_geo),
+                Err(error) =>
+                {
+                    eprintln!("parse_alerts: alert {} ({}): removing geometry that can't be used, \
+                        matching by SAME code instead: {error}", alert_id(alert), alert_event(alert));
+                    alert.geometry = None;
+                    reasons.push(InvalidAlertReason::InvalidGeometry);
+                    geometry_error_reason = Some(error.reason);
+                    geometry_error = Some(error.message);
+                }
+            }
+        }
+
+        if !reasons.is_empty()
+        {
+            invalid_alerts.push(InvalidAlert
+            {
+                alert_id: received.id.clone(),
+                reasons,
+                invalid_same_codes: invalid,
+                geometry_error_reason,
+                geometry_error,
+                alert: received,
+                first_seen: now,
+                last_seen: now,
+            });
+        }
+    }
+    (alerts, invalid_alerts)
 }
 
 // buckets alerts by whether they have usable polygon geometry,
@@ -88,20 +166,10 @@ pub fn sort_alerts(mut alerts: Alerts) -> AlertsSorted
     {
         match &alert.geometry
         {
+            // parse_alerts already converts geojson, this handles alerts that skipped it
             Some(GeometryTypes::Geojson(geo)) =>
             {
-                // the geojson type tag decides which geo_types struct to convert into
-                let converted = match &geo.value
-                {
-                    GeometryValue::MultiPolygon { .. } =>
-                        geo_types::MultiPolygon::try_from(geo)
-                        .map(GeometryTypes::MultiPolygon),
-                    _ =>
-                        geo_types::Polygon::try_from(geo)
-                        .map(GeometryTypes::Polygon),
-                };
-
-                match converted
+                match convert_geometry(geo)
                 {
                     Ok(new_geo) =>
                     {

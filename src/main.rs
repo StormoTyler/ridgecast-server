@@ -31,6 +31,7 @@ mod models;
 mod sms;
 mod snapshots;
 mod daily_forecast;
+mod geometry;
 #[cfg(test)]
 mod tests;
 use crate::models::{UserPoint, Point, ForecastVars, ForecastProperties, PointGeometry, PointProperties,

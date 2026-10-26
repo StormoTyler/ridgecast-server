@@ -10,12 +10,12 @@ use thiserror::Error;
 use geojson;
 use geo;
 use geo::Intersects;
-use geojson::GeometryValue;
 use chrono_tz::Tz;
 
 // local modules
 use crate::models::{AvalancheData, AvyArea, AvyProperties, Point, 
-    DateTimeTypes, GeometryTypes, RawFeatures, UserPoint};
+    DateTimeTypes, GeometryTypes, RawFeatures, UserPoint, InvalidAvyArea};
+use crate::geometry::convert_geometry;
 
 const BASE_URL: &str = "https://api.avalanche.org/v2/public/products/map-layer";
 
@@ -85,7 +85,8 @@ async fn fetch_avy() -> Result<RawFeatures, NACError>
     Ok(serde_json::from_value(avy_json)?)
 }
 
-pub async fn get_avy() -> Result<AvalancheData, NACError>
+// returns the avalanche zones and the zones whose geometry could not be converted
+pub async fn get_avy() -> Result<(AvalancheData, Vec<InvalidAvyArea>), NACError>
 {
     // retry once if the response is malformed
     let raw = match fetch_avy().await
@@ -99,18 +100,20 @@ pub async fn get_avy() -> Result<AvalancheData, NACError>
     };
     //println!("{:?}", avy);
 
+    let (features, invalid_areas) = build_avy_map(raw.parse("NAC map layer"));
     // wrap the zones so the snapshot is stored as a single document
-    Ok(AvalancheData
-    {
-        features: build_avy_map(raw.parse("NAC map layer")),
-        fetched_at: chrono::Utc::now(),
-    })
+    Ok((AvalancheData { features, fetched_at: chrono::Utc::now() }, invalid_areas))
 }
 
 // converts each zone's dates to local time and its geometry to geo_types,
 // so check_avy_geometry can test points against them
-pub fn build_avy_map(mut features: Vec<AvyArea>) -> Vec<AvyArea>
+// a zone whose geometry can't be converted keeps its Geojson geometry, which
+// check_avy_geometry never matches. it is logged and returned as an InvalidAvyArea
+pub fn build_avy_map(mut features: Vec<AvyArea>) -> (Vec<AvyArea>, Vec<InvalidAvyArea>)
 {
+    let mut invalid_areas = Vec::new();
+    let now = chrono::Utc::now();
+
     for area in features.iter_mut()
     {
         // NAC dates have no offset but are in UTC,
@@ -131,29 +134,32 @@ pub fn build_avy_map(mut features: Vec<AvyArea>) -> Vec<AvyArea>
 
         if let GeometryTypes::Geojson(geo) = &area.geometry
         {
-            // the geojson type tag decides which geo_types struct to convert into
-            let converted = match &geo.value
-            {
-                GeometryValue::Polygon { .. } =>
-                    geo_types::Polygon::try_from(geo)
-                    .map(GeometryTypes::Polygon),
-                GeometryValue::MultiPolygon { .. } =>
-                    geo_types::MultiPolygon::try_from(geo)
-                    .map(GeometryTypes::MultiPolygon),
-                // other geometry kinds can't be used for zone checks
-                _ => continue,
-            };
-
-            match converted
+            match convert_geometry(geo)
             {
                 Ok(new_geo) => area.geometry = new_geo,
-                // leave the geometry as Geojson if conversion fails
-                Err(_e) => {}
+                Err(error) =>
+                {
+                    let zone_name = area.properties.name.clone();
+                    let center = area.properties.center.clone();
+                    eprintln!("build_avy_map: zone {} ({}) can't be matched to a location, {error}",
+                        zone_name.as_deref().unwrap_or("without name"),
+                        center.as_deref().unwrap_or("unknown center"));
+                    invalid_areas.push(InvalidAvyArea
+                    {
+                        zone_name,
+                        center,
+                        reason: error.reason,
+                        error: error.message,
+                        area: area.clone(),
+                        first_seen: now,
+                        last_seen: now,
+                    });
+                }
             }
         }
     }
 
-    features
+    (features, invalid_areas)
 }
 
 // checks whether a point intersects with an avalanche forecast zone 

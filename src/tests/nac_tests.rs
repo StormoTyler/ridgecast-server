@@ -1,6 +1,7 @@
 // tests for nac::check_avy_geometry and nac::check_avy_tracker against a saved NAC map-layer response
 use crate::handlers::nac::{self, NACError};
 use crate::models::{AvalancheData, AvyArea, AvyProperties, DateTimeTypes, ForecastVars,
+    InvalidAvyArea, GeometryErrorReason,
     GeometryTypes, NWR, Point, PointGeometry, PointProperties, RawFeatures, UserPoint};
 
 const TEST_DATA: &str = include_str!("test_data/nac_test_data.json");
@@ -20,7 +21,7 @@ fn load_avy() -> AvalancheData
     let raw: RawFeatures = serde_json::from_str(TEST_DATA)
         .expect("test data should be a geojson feature collection");
     let features: Vec<AvyArea> = raw.parse("NAC test data");
-    AvalancheData { features: nac::build_avy_map(features), fetched_at: chrono::Utc::now() }
+    AvalancheData { features: nac::build_avy_map(features).0, fetched_at: chrono::Utc::now() }
 }
 
 // the zone with the given name, zone names are unique in the test data
@@ -249,4 +250,105 @@ async fn test_avy_tracker_in_off_season_zone()
 
     assert!(!nac::check_avy_tracker(&mut tracker, &avy).await);
     assert!(tracker.avy.is_none());
+}
+
+// runs build_avy_map on a json array of raw NAC zones with the given geometries,
+// returning the zones and the records of zones that failed. every zone must
+// deserialize, so a mistake in a test zone fails here instead of being skipped
+fn build_zones(geometries: &[serde_json::Value]) -> (Vec<AvyArea>, Vec<InvalidAvyArea>)
+{
+    let features: Vec<serde_json::Value> = geometries.iter().enumerate()
+        .map(|(i, geometry)| serde_json::json!({
+            "id": i,
+            "properties": { "name": format!("Zone {i}"), "center": "Test Center" },
+            "geometry": geometry,
+        }))
+        .collect();
+    let raw: RawFeatures = serde_json::from_value(serde_json::json!({ "features": features }))
+        .expect("test zones should be a feature collection");
+    let parsed: Vec<AvyArea> = raw.parse("NAC test zones");
+    assert_eq!(parsed.len(), geometries.len(),
+        "every test zone should deserialize, check the logged skipped features");
+    nac::build_avy_map(parsed)
+}
+
+// a closed square ring, the smallest valid exterior ring
+fn square() -> serde_json::Value
+{
+    serde_json::json!([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]])
+}
+
+#[test]
+fn test_build_avy_map_test_data_has_no_invalid_zones()
+{
+    let raw: RawFeatures = serde_json::from_str(TEST_DATA)
+        .expect("test data should be a geojson feature collection");
+    let (_, invalid) = nac::build_avy_map(raw.parse("NAC test data"));
+    assert!(invalid.is_empty(), "unexpected invalid zones: {:?}",
+        invalid.iter().map(|record| &record.zone_name).collect::<Vec<_>>());
+}
+
+#[test]
+fn test_build_avy_map_converts_valid_polygon()
+{
+    let (zones, invalid) = build_zones(&[serde_json::json!({ "type": "Polygon", "coordinates": [square()] })]);
+    assert!(invalid.is_empty());
+    assert!(matches!(zones[0].geometry, GeometryTypes::Polygon(_)));
+}
+
+#[test]
+fn test_build_avy_map_records_unsupported_geometry()
+{
+    let (zones, invalid) = build_zones(&[serde_json::json!({ "type": "Point", "coordinates": [0.0, 0.0] })]);
+
+    assert_eq!(invalid.len(), 1);
+    assert_eq!(invalid[0].reason, GeometryErrorReason::UnsupportedGeometryType);
+    assert_eq!(invalid[0].zone_name.as_deref(), Some("Zone 0"));
+    assert_eq!(invalid[0].center.as_deref(), Some("Test Center"));
+    // the zone is kept with its geometry unconverted, so it never matches
+    assert!(matches!(zones[0].geometry, GeometryTypes::Geojson(_)));
+    assert!(matches!(invalid[0].area.geometry, GeometryTypes::Geojson(_)));
+}
+
+#[test]
+fn test_build_avy_map_records_malformed_coordinates_instead_of_panicking()
+{
+    // geojson's conversion panics on a position with one coordinate
+    let ring = serde_json::json!([[0.0, 0.0], [1.0], [1.0, 1.0], [0.0, 0.0]]);
+    let (zones, invalid) = build_zones(&[
+        serde_json::json!({ "type": "Polygon", "coordinates": [ring] }),
+        serde_json::json!({ "type": "MultiPolygon", "coordinates": [[square()], [ring]] }),
+    ]);
+
+    assert_eq!(invalid.len(), 2);
+    assert!(invalid.iter().all(|record| record.reason == GeometryErrorReason::MalformedCoordinates));
+    assert!(zones.iter().all(|zone| matches!(zone.geometry, GeometryTypes::Geojson(_))));
+}
+
+#[test]
+fn test_build_avy_map_records_degenerate_geometry()
+{
+    // these convert without error but could never contain a point
+    let short_ring = serde_json::json!([[0.0, 0.0], [1.0, 0.0], [0.0, 0.0]]);
+    let (_, invalid) = build_zones(&[
+        serde_json::json!({ "type": "Polygon", "coordinates": [] }),
+        serde_json::json!({ "type": "Polygon", "coordinates": [[]] }),
+        serde_json::json!({ "type": "Polygon", "coordinates": [short_ring] }),
+        serde_json::json!({ "type": "MultiPolygon", "coordinates": [] }),
+    ]);
+
+    assert_eq!(invalid.len(), 4);
+    assert!(invalid.iter().all(|record| record.reason == GeometryErrorReason::DegenerateGeometry));
+}
+
+#[test]
+fn test_invalid_avy_area_round_trips_through_bson()
+{
+    let (_, invalid) = build_zones(&[serde_json::json!({ "type": "Point", "coordinates": [0.0, 0.0] })]);
+
+    let stored = bson::to_document(&invalid[0]).expect("invalid zone should serialize");
+    assert!(stored.get_datetime("first_seen").is_ok(), "first_seen should be a bson datetime");
+    let read: InvalidAvyArea = bson::from_document(stored).expect("invalid zone should deserialize");
+    assert_eq!(read.zone_name.as_deref(), Some("Zone 0"));
+    assert_eq!(read.reason, GeometryErrorReason::UnsupportedGeometryType);
 }
