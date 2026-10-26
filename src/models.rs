@@ -360,17 +360,8 @@ pub enum NWSError
 {                                                            
     #[error("could not retrieve data from NWS API: {0}")]
     APICallError(#[from] reqwest::Error),
-    #[error("received error response from NWS endpoint")]
-    NWSResponseError,
     #[error("json parsing failed: {0}")]
     JsonError(#[from] serde_json::Error),
-    #[error("failed to fetch points")]                       
-    PointsError,                                             
-    #[error("invalid points data")]                          
-    PointsDataError,                                         
-    #[error("failed geometry conversion")]
-    GeometryError,
-
 }
 
 impl NWSError
@@ -395,8 +386,17 @@ impl NWSError
         {
             NWSError::APICallError(e) => e.is_decode(),
             NWSError::JsonError(_) => true,
-            _ => false,
         }
+    }
+
+    // a failure that may not happen again: a 5xx response, a timeout,
+    // a connection failure, or a malformed body. a 404 is not transient
+    pub fn is_transient(&self) -> bool
+    {
+        self.is_malformed() || matches!(self, NWSError::APICallError(e)
+            if e.status().is_some_and(|status| status.is_server_error())
+                || e.is_timeout()
+                || e.is_connect())
     }
 }
 // end nws data models

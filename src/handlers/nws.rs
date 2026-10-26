@@ -262,21 +262,37 @@ pub fn check_alerts(alerts: &AlertsSorted, point: &Point) -> Vec<Alert>
 
 pub async fn get_point(lat:f32, lon: f32) -> Result<Point, NWSError>
 {
-    let points_response =                                   
-        NWS_CLIENT                                          
-        .get(format!("{BASE_URL}/points/{lat},{lon}"))      
-        .send()                                             
-        .await?                                             
-        .error_for_status()?;                               
-                                                         
-     let points_json: serde_json::Value =                    
-        points_response                                     
-        .json()                                             
-        .await?;                                            
-                                                         
-    let point: Point = serde_json::from_value(points_json)?;
+    // NWS often returns a temporary 500 or 503, so a transient failure is retried once
+    let mut retried = false;
+    loop
+    {
+        let result: Result<Point, NWSError> = async
+        {
+            let points_response =
+                NWS_CLIENT
+                .get(format!("{BASE_URL}/points/{lat},{lon}"))
+                .send()
+                .await?
+                .error_for_status()?;
 
-    Ok(point)
+            let points_json: serde_json::Value =
+                points_response
+                .json()
+                .await?;
+
+            Ok(serde_json::from_value(points_json)?)
+        }.await;
+
+        match result
+        {
+            Err(e) if !retried && e.is_transient() =>
+            {
+                eprintln!("get_point: transient failure, retrying once: {e}");
+                retried = true;
+            }
+            result => return result,
+        }
+    }
 }
 
 // fetches gridpoint data from NWS API gridpoints endpoint 
@@ -285,25 +301,42 @@ pub async fn get_forecast(lat: f32, lon: f32, alerts: &AlertsSorted) ->
 {
     let point = get_point(lat, lon).await?;
 
-    let gridpoints_response =  
-        NWS_CLIENT
-        .get(format!("{BASE_URL}/gridpoints/{}/{},{}",
-        point.properties.cwa,                                                                                                                                
-        point.properties.grid_x,
-        point.properties.grid_y))                                                                                                                            
-        .send()
-        .await?
-        .error_for_status()?;                                                                                                                                                          
+    // retried once on a transient failure, like get_point
+    let mut retried = false;
+    let forecast: Forecast = loop
+    {
+        let result: Result<Forecast, NWSError> = async
+        {
+            let gridpoints_response =
+                NWS_CLIENT
+                .get(format!("{BASE_URL}/gridpoints/{}/{},{}",
+                point.properties.cwa,
+                point.properties.grid_x,
+                point.properties.grid_y))
+                .send()
+                .await?
+                .error_for_status()?;
 
-    let gridpoints: serde_json::Value = 
-        gridpoints_response
-        .json()
-        .await?;
+            let gridpoints: serde_json::Value =
+                gridpoints_response
+                .json()
+                .await?;
 
-    //println!("gridpoints is {:?}", gridpoints);
+            //println!("gridpoints is {:?}", gridpoints);
 
-    
-    let forecast: Forecast = serde_json::from_value(gridpoints)?;
+            Ok(serde_json::from_value(gridpoints)?)
+        }.await;
+
+        match result
+        {
+            Err(e) if !retried && e.is_transient() =>
+            {
+                eprintln!("get_forecast: transient failure, retrying once: {e}");
+                retried = true;
+            }
+            result => break result?,
+        }
+    };
     //println!("forecast is: {:?}", forecast);
 
     let active_alerts: Vec<Alert> =
