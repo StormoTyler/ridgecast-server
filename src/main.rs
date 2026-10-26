@@ -145,7 +145,7 @@ async fn new_forecast(State(db): State<DB>) -> Response
         valid_duration: 0,
         next_daily_forecast: None,
     };
-    if let Err(e) = add_alert_tracker(user_point, &db).await
+    if let Err(e) = add_alert_tracker(&user_point, &db).await
     {
         eprintln!("new_forecast: failed to save user point: {e}");
         return APIError::DatabaseError.into_response();
@@ -153,9 +153,9 @@ async fn new_forecast(State(db): State<DB>) -> Response
     with_stale_header(Json(forecast).into_response(), stale)
 }
 
-async fn add_alert_tracker(user_point: UserPoint, db: &DB) -> mongodb::error::Result<()>
+async fn add_alert_tracker(user_point: &UserPoint, db: &DB) -> mongodb::error::Result<()>
 {
-    db.points_collection.insert_one(&user_point).await?;
+    db.points_collection.insert_one(user_point).await?;
     Ok(())
 }
 

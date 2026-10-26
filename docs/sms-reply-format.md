@@ -188,11 +188,15 @@ tracker's name, what is tracked (`alerts`, `avy`, `daily forecast`), and when
 the tracker ends. The tracker's own messages show the name in their header,
 so the user can match them to this line.
 
+If the tracker could not be saved, the tracker line is replaced with the
+`Could not create tracker` notice, and the rest of the reply is sent as usual.
+
 ### Notice
 
 | Line | Meaning |
 |---|---|
 | `Daily forecast unavailable` | The request set `daily_forecast`, but no daily forecast tracker was created because NWS reported no time zone for the location |
+| `Could not create tracker` | The request asked for a tracker, but it could not be saved, even after one retry, matching `tracker_notice` in `src/sms.rs`. No tracker messages will be sent, so the user should send the request again |
 
 ### Forecast day
 
@@ -277,13 +281,17 @@ compact format with short labels. It contains:
 
 1. Alerts.
 2. The avalanche line without the zone name.
-3. The request's forecast length in days, starting with today, with only the
+3. `!no tracker`, only when the request asked for a tracker that could not be
+   created.
+4. The request's forecast length in days, starting with today, with only the
    three always-present tokens and `P`, `R`, and `S`.
 
-There is no elevation, tracker, or notice line, so the brief format does not
-show the tracker name. If the message does not fit in
-140 characters, forecast days are dropped first, then the alert lines are
-replaced with `!+<n> alerts`.
+There is no elevation or tracker line, and no notice line other than
+`!no tracker`, so the brief format does not show the tracker name. If the
+message does not fit in 140 characters, forecast days are dropped first, then
+the alert lines are replaced with `!+<n> alerts`. `!no tracker` is never
+dropped, since without it the user would wait for tracker messages that will
+never be sent.
 
 ```
 (1/1)
@@ -313,6 +321,7 @@ The same local time as the full format, written shorter:
 | Alerts stale notice | `!alerts may be old` | The same notice as the full format |
 | Avalanche | `AV3 Considerable` | `AV`, the danger level, and the danger rating |
 | Avalanche notice | `AV no forecast`, `AV off season`, `AV unavailable`, `AV may be old` | The same notices as the full format |
+| No tracker notice | `!no tracker` | The full format's `Could not create tracker` notice, matching `tracker_notice` in `src/sms.rs` |
 | Forecast day | `Tu 34/22 SW25 P90 R0.85 S11` | See below |
 
 ### Brief forecast day

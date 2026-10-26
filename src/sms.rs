@@ -329,6 +329,9 @@ pub struct SmsForecastResponse
     // explains why a daily_forecast request did not get a daily forecast tracker
     #[serde(skip_serializing_if = "Option::is_none")]
     pub daily_notice: Option<&'static str>,
+    // set when the request asked for a tracker but it could not be saved, even after a retry
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tracker_notice: Option<&'static str>,
 }
 
 impl RequestedForecast
@@ -546,6 +549,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     // a tracker that would never send a daily forecast does not track it
     let daily_forecast = next_daily_forecast.is_some();
 
+    let mut tracker_notice = None;
     if forecast_vars.track_alerts || track_avy || daily_forecast
     {
         // one tracker covers every option, its forecast_vars record which are on
@@ -561,15 +565,22 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
             valid_duration: *tracker_duration,
             next_daily_forecast,
         };
-        if let Err(e) = add_alert_tracker(user_point, db).await
+        // the forecast is the safety information, so it is sent even if the
+        // tracker can't be saved. the save is retried once, then the user is told
+        let name = tracker_name.as_deref().unwrap_or("without name");
+        if let Err(e) = add_alert_tracker(&user_point, db).await
         {
-            eprintln!("get_requested_forecast: failed to save tracker: {e}");
-            return Err(APIError::DatabaseError);
+            eprintln!("get_requested_forecast: failed to save tracker {name}, retrying once: {e}");
+            if let Err(e) = add_alert_tracker(&user_point, db).await
+            {
+                eprintln!("get_requested_forecast: retry failed, tracker {name} was not created: {e}");
+                tracker_notice = Some("Could not create tracker.");
+            }
         }
     }
 
     Ok(SmsForecastResponse { point, forecast, alerts: active_alerts, alerts_stale_notice,
-        avy, avy_notice, avy_stale_notice, daily_notice })
+        avy, avy_notice, avy_stale_notice, daily_notice, tracker_notice })
 }
 
 // maps an NWS error the same way the route handlers do
