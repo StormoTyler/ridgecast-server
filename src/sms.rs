@@ -15,7 +15,7 @@ use crate::database::DB;
 use crate::snapshots::{self, Snapshot};
 use crate::handlers::{nac, nws};
 use crate::handlers::nac::NACError;
-use crate::models::{Alert, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
+use crate::models::{Alert, AlertsSorted, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
     ForecastResponse, ForecastVars, IntVec, NWSError, Point, Properties,
     UserPoint};
 
@@ -311,6 +311,10 @@ pub struct SmsForecastResponse
     // None when the request set the no_forecast flag
     pub forecast: Option<RequestedForecast>,
     pub alerts: Vec<Alert>,
+    // set when no alerts could be loaded, so alerts is empty because they
+    // weren't checked, not because there are none
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alerts_notice: Option<&'static str>,
     // set when the alerts are older than snapshots::ALERTS_MAX_AGE because
     // they could not be refreshed from NWS
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -429,9 +433,26 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     let SmsRequest { lat, lon, tracker_duration, forecast_length, tracker_name, forecast_vars } = request;
     let (lat, lon) = (*lat, *lon);
 
-    // fails the request only when NWS can't be reached and no alerts are stored
-    let Snapshot { data: alerts, stale: alerts_stale } = snapshots::load_alerts(db).await?;
-    let alerts_stale_notice = alerts_stale.then_some("Alerts may be out of date.");
+    // alerts that can't be loaded don't fail the request, the forecast is still sent.
+    // the user is told the alerts couldn't be checked, so no alert lines
+    // aren't read as no active alerts
+    let mut alerts_notice = None;
+    let mut alerts_stale_notice = None;
+    let alerts = match snapshots::load_alerts(db).await
+    {
+        Ok(Snapshot { data, stale }) =>
+        {
+            alerts_stale_notice = stale.then_some("Alerts may be out of date.");
+            data
+        }
+        Err(e) =>
+        {
+            eprintln!("get_requested_forecast: alerts unavailable: {e}");
+            alerts_notice = Some("Alerts could not be checked.");
+            // matches no point, so active_alerts is empty
+            AlertsSorted::default()
+        }
+    };
 
     let (point, forecast, active_alerts) = if forecast_vars.no_forecast
     {
@@ -580,7 +601,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         }
     }
 
-    Ok(SmsForecastResponse { point, forecast, alerts: active_alerts, alerts_stale_notice,
+    Ok(SmsForecastResponse { point, forecast, alerts: active_alerts, alerts_notice, alerts_stale_notice,
         avy, avy_notice, avy_stale_notice, daily_notice, tracker_notice })
 }
 

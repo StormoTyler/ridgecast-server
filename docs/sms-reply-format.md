@@ -139,6 +139,16 @@ If the alert lines would not fit in the first message, the server lists as
 many as fit and ends with `!+2 more alerts` (the number of alerts left out).
 
 ```
+!Alerts could not be checked
+```
+
+Sent in place of the alert lines when no alerts could be read: NWS could not
+be reached and there are no stored alerts to fall back on, matching
+`alerts_notice` in `src/sms.rs`. The rest of the reply is sent as usual. It
+stays in the first message, so a reply without alert lines is never read as
+having no active alerts.
+
+```
 !Alerts may be out of date
 ```
 
@@ -339,6 +349,7 @@ The same local time as the full format, written shorter:
 | Line | Example | Meaning |
 |---|---|---|
 | Alert | `!Winter Storm Warning til We7 6PM` | `!`, the NWS event name, `til`, and the expiry time. If the alerts do not fit, they are replaced with `!+<n> alerts` |
+| Alerts unavailable notice | `!alerts not checked` | The full format's `!Alerts could not be checked`. It is never dropped |
 | Alerts stale notice | `!alerts may be old` | The same notice as the full format |
 | Avalanche | `AV3 Considerable` | `AV`, the danger level, and the danger rating |
 | Avalanche notice | `AV no forecast`, `AV off season`, `AV unavailable`, `AV may be old` | The same notices as the full format |
