@@ -2,7 +2,7 @@ use std::time::Duration;
 use mongodb::{bson::doc, error::Result, options::{ClientOptions, IndexOptions}, Client, Collection, IndexModel};
 
 // local modules
-use crate::models::{AlertsSorted, UserPoint, AvalancheData, InvalidAlert, InvalidAvyArea};
+use crate::models::{AlertsSorted, UserPoint, AvalancheData, InvalidAlert, InvalidAvyArea, SkippedFeature};
 
 // debugging records are deleted this long after an alert or zone last failed validation
 const DEBUG_RECORD_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
@@ -16,6 +16,8 @@ pub struct DB {
     pub invalid_alerts_collection: Collection<InvalidAlert>,
     // avalanche zones whose geometry could not be converted, kept for debugging
     pub invalid_avy_areas_collection: Collection<InvalidAvyArea>,
+    // NWS and NAC features that couldn't be deserialized, kept for debugging
+    pub skipped_features_collection: Collection<SkippedFeature>,
 }
 
 impl DB {
@@ -39,6 +41,7 @@ impl DB {
         let avy_collection = database.collection::<AvalancheData>("avy");
         let invalid_alerts_collection = database.collection::<InvalidAlert>("invalid_alerts");
         let invalid_avy_areas_collection = database.collection::<InvalidAvyArea>("invalid_avy_areas");
+        let skipped_features_collection = database.collection::<SkippedFeature>("skipped_features");
 
         // the scheduler finds due daily forecasts with next_daily_forecast <= now.
         // creating an index that already exists does nothing
@@ -54,6 +57,10 @@ impl DB {
             .create_index(IndexModel::builder().keys(doc! { "zone_name": 1, "center": 1 }).build())
             .await?;
 
+        // each refresh upserts skipped features by source and feature_id
+        skipped_features_collection
+            .create_index(IndexModel::builder().keys(doc! { "source": 1, "feature_id": 1 }).build())
+            .await?;
         // mongo deletes debugging records once last_seen is older than DEBUG_RECORD_TTL.
         // every refresh that sees the problem again updates last_seen, so only
         // problems NWS or NAC no longer send expire
@@ -63,6 +70,7 @@ impl DB {
             .build();
         invalid_alerts_collection.create_index(ttl_index()).await?;
         invalid_avy_areas_collection.create_index(ttl_index()).await?;
+        skipped_features_collection.create_index(ttl_index()).await?;
 
         println!("Pinged your database. Successfully connected to MongoDB!");
 
@@ -72,6 +80,7 @@ impl DB {
             avy_collection,
             invalid_alerts_collection,
             invalid_avy_areas_collection,
+            skipped_features_collection,
         })
     }
 }

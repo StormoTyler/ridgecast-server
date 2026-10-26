@@ -494,28 +494,88 @@ pub struct RawFeatures
 
 impl RawFeatures
 {
-    pub fn parse<T: DeserializeOwned>(self, source: &str) -> Vec<T>
+    // deserializes each feature on its own, returning the features that
+    // deserialized and a record of each one that didn't
+    pub fn parse<T: DeserializeOwned>(self, source: &str) -> (Vec<T>, SkippedFeatures)
     {
-        self.features
-            .into_iter()
-            .filter_map(|feature|
-            {
-                let id = feature.get("id")
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| "without id".to_string());
+        let total = self.features.len();
+        let now = Utc::now();
+        let mut parsed = Vec::with_capacity(total);
+        let mut skipped = Vec::new();
 
-                match serde_json::from_value(feature)
+        for feature in self.features
+        {
+            // read from a reference, so the feature can still be stored if it fails
+            match T::deserialize(&feature)
+            {
+                Ok(value) => parsed.push(value),
+                Err(e) =>
                 {
-                    Ok(parsed) => Some(parsed),
-                    Err(e) =>
+                    // NWS ids are strings and NAC ids are numbers
+                    let feature_id = feature.get("id").map(|id| match id
                     {
-                        eprintln!("{source}: skipping feature {id}: {e}");
-                        None
-                    }
+                        serde_json::Value::String(id) => id.clone(),
+                        other => other.to_string(),
+                    });
+                    eprintln!("{source}: skipping feature {}: {e}",
+                        feature_id.as_deref().unwrap_or("without id"));
+                    skipped.push(SkippedFeature
+                    {
+                        source: source.to_string(),
+                        feature_id,
+                        error: e.to_string(),
+                        feature,
+                        first_seen: now,
+                        last_seen: now,
+                    });
                 }
-            })
-            .collect()
+            }
+        }
+
+        if !skipped.is_empty()
+        {
+            eprintln!("{source}: skipped {} of {total} features", skipped.len());
+        }
+        (parsed, SkippedFeatures { features: skipped, total })
     }
+}
+
+// a fetch fails when this percentage or more of its features can't be
+// deserialized, since that suggests the upstream format changed
+pub const SKIPPED_FEATURES_FAIL_PERCENT: usize = 10;
+
+// the features RawFeatures::parse couldn't deserialize, out of the total it was given
+#[derive(Debug, Default)]
+pub struct SkippedFeatures
+{
+    pub features: Vec<SkippedFeature>,
+    pub total: usize,
+}
+
+impl SkippedFeatures
+{
+    pub fn too_many(&self) -> bool
+    {
+        self.total > 0 && self.features.len() * 100 >= self.total * SKIPPED_FEATURES_FAIL_PERCENT
+    }
+}
+
+// a feature that couldn't be deserialized, stored in the skipped_features
+// collection for debugging
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SkippedFeature
+{
+    // the feature collection it came from, such as "NWS alerts"
+    pub source: String,
+    // the source and feature id identify the record across refreshes
+    pub feature_id: Option<String>,
+    pub error: String,
+    // the feature's json as received
+    pub feature: serde_json::Value,
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub first_seen: DateTime<Utc>,
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub last_seen: DateTime<Utc>,
 }
 
 // shared data structures for dealing with datetime

@@ -15,7 +15,7 @@ use chrono_tz::Tz;
 
 // local modules
 use crate::models::{AvalancheData, AvyArea, AvyProperties, Point, 
-    DateTimeTypes, GeometryTypes, RawFeatures, UserPoint, InvalidAvyArea};
+    DateTimeTypes, GeometryTypes, RawFeatures, UserPoint, InvalidAvyArea, SkippedFeatures};
 use crate::geometry::convert_geometry;
 use crate::tracking::{self, Validity};
 use crate::snapshots::Snapshot;
@@ -90,8 +90,9 @@ async fn fetch_avy() -> Result<RawFeatures, NACError>
     Ok(serde_json::from_value(avy_json)?)
 }
 
-// returns the avalanche zones and the zones whose geometry could not be converted
-pub async fn get_avy() -> Result<(AvalancheData, Vec<InvalidAvyArea>), NACError>
+// returns the avalanche zones, the zones whose geometry could not be converted,
+// and the features that couldn't be deserialized
+pub async fn get_avy() -> Result<(AvalancheData, Vec<InvalidAvyArea>, SkippedFeatures), NACError>
 {
     // retry once if the response is malformed
     let raw = match fetch_avy().await
@@ -105,9 +106,10 @@ pub async fn get_avy() -> Result<(AvalancheData, Vec<InvalidAvyArea>), NACError>
     };
     //println!("{:?}", avy);
 
-    let (features, invalid_areas) = build_avy_map(raw.parse("NAC map layer"));
+    let (features, skipped) = raw.parse("NAC map layer");
+    let (features, invalid_areas) = build_avy_map(features);
     // wrap the zones so the snapshot is stored as a single document
-    Ok((AvalancheData { features, fetched_at: chrono::Utc::now() }, invalid_areas))
+    Ok((AvalancheData { features, fetched_at: chrono::Utc::now() }, invalid_areas, skipped))
 }
 
 // converts each zone's dates to local time and its geometry to geo_types,

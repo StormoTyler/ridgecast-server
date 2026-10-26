@@ -36,7 +36,7 @@ fn load_avy() -> AvalancheData
 {
     let raw: RawFeatures = serde_json::from_str(TEST_DATA)
         .expect("test data should be a geojson feature collection");
-    let features: Vec<AvyArea> = raw.parse("NAC test data");
+    let (features, _): (Vec<AvyArea>, _) = raw.parse("NAC test data");
     AvalancheData { features: nac::build_avy_map(features).0, fetched_at: chrono::Utc::now() }
 }
 
@@ -564,9 +564,10 @@ fn build_zones(geometries: &[serde_json::Value]) -> (Vec<AvyArea>, Vec<InvalidAv
         .collect();
     let raw: RawFeatures = serde_json::from_value(serde_json::json!({ "features": features }))
         .expect("test zones should be a feature collection");
-    let parsed: Vec<AvyArea> = raw.parse("NAC test zones");
-    assert_eq!(parsed.len(), geometries.len(),
+    let (parsed, skipped): (Vec<AvyArea>, _) = raw.parse("NAC test zones");
+    assert!(skipped.features.is_empty(),
         "every test zone should deserialize, check the logged skipped features");
+    assert_eq!(parsed.len(), geometries.len());
     nac::build_avy_map(parsed)
 }
 
@@ -581,7 +582,7 @@ fn test_build_avy_map_test_data_has_no_invalid_zones()
 {
     let raw: RawFeatures = serde_json::from_str(TEST_DATA)
         .expect("test data should be a geojson feature collection");
-    let (_, invalid) = nac::build_avy_map(raw.parse("NAC test data"));
+    let (_, invalid) = nac::build_avy_map(raw.parse("NAC test data").0);
     assert!(invalid.is_empty(), "unexpected invalid zones: {:?}",
         invalid.iter().map(|record| &record.zone_name).collect::<Vec<_>>());
 }

@@ -16,7 +16,7 @@ use crate::models::{Point, PointGeometry, PointProperties,
     AlertData, Geocode, AlertsSorted,
     Forecast, Properties, Elevation, IntVec, TimeInt,
     FloatVec, TimeFloat, ForecastResponse, NWSError, RawFeatures,
-    InvalidAlert, InvalidAlertReason};
+    InvalidAlert, InvalidAlertReason, SkippedFeatures};
 use crate::geometry::convert_geometry;
 
 const BASE_URL: &str = "https://api.weather.gov";
@@ -55,8 +55,9 @@ async fn fetch_alerts() -> Result<RawFeatures, NWSError>
     Ok(serde_json::from_value(alerts_json)?)
 }
 
-// returns the sorted alerts and the alerts that failed validation
-pub async fn get_alerts() -> Result<(AlertsSorted, Vec<InvalidAlert>), NWSError>
+// returns the sorted alerts, the alerts that failed validation,
+// and the features that couldn't be deserialized
+pub async fn get_alerts() -> Result<(AlertsSorted, Vec<InvalidAlert>, SkippedFeatures), NWSError>
 {
     //println!("get_alerts called)");
 
@@ -70,12 +71,12 @@ pub async fn get_alerts() -> Result<(AlertsSorted, Vec<InvalidAlert>), NWSError>
         }
         result => result?,
     };
-    let (alerts, invalid_alerts) = parse_alerts(raw);
+    let (alerts, invalid_alerts, skipped) = parse_alerts(raw);
 
     let mut alerts_sorted = sort_alerts(alerts);
     alerts_sorted.fetched_at = chrono::Utc::now();
     println!("{:?}", alerts_sorted);
-    Ok((alerts_sorted, invalid_alerts))
+    Ok((alerts_sorted, invalid_alerts, skipped))
 }
 
 // deserializes the alerts and checks their SAME codes against the NWS spec
@@ -83,10 +84,12 @@ pub async fn get_alerts() -> Result<(AlertsSorted, Vec<InvalidAlert>), NWSError>
 // match a point, and every alert left without a SAME code is logged
 // geometry is converted for sort_alerts, geometry that can't be used is logged
 // and removed so the alert is matched by its SAME codes instead
-// returns the alerts and a record of each alert that failed validation
-pub fn parse_alerts(raw: RawFeatures) -> (Alerts, Vec<InvalidAlert>)
+// returns the alerts, a record of each alert that failed validation,
+// and the features that couldn't be deserialized
+pub fn parse_alerts(raw: RawFeatures) -> (Alerts, Vec<InvalidAlert>, SkippedFeatures)
 {
-    let mut alerts = Alerts { features: raw.parse("NWS alerts") };
+    let (features, skipped) = raw.parse("NWS alerts");
+    let mut alerts = Alerts { features };
     let mut invalid_alerts = Vec::new();
     let now = chrono::Utc::now();
 
@@ -151,7 +154,7 @@ pub fn parse_alerts(raw: RawFeatures) -> (Alerts, Vec<InvalidAlert>)
             });
         }
     }
-    (alerts, invalid_alerts)
+    (alerts, invalid_alerts, skipped)
 }
 
 // buckets alerts by whether they have usable polygon geometry,

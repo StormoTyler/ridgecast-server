@@ -11,7 +11,8 @@ use serde::Serialize;
 use crate::APIError;
 use crate::database::DB;
 use crate::handlers::{nac, nws};
-use crate::models::{AlertsSorted, AvalancheData, InvalidAlert, InvalidAvyArea};
+use crate::models::{AlertsSorted, AvalancheData, InvalidAlert, InvalidAvyArea, SkippedFeatures,
+    SKIPPED_FEATURES_FAIL_PERCENT};
 
 // NWS updates alerts continuously
 pub const ALERTS_MAX_AGE: TimeDelta = TimeDelta::minutes(15);
@@ -124,14 +125,25 @@ pub async fn load_avy(db: &DB) -> Result<Snapshot<AvalancheData>, APIError>
     }
 }
 
-// fetches the alerts from NWS and stores any that failed validation
+// fetches the alerts from NWS and stores any that failed validation or
+// couldn't be deserialized. fails if too many couldn't be deserialized, so
+// the loader falls back to the last good snapshot instead of storing a
+// snapshot that is missing alerts
 async fn fetch_alerts(db: &DB) -> Result<AlertsSorted, APIError>
 {
-    let (alerts, invalid_alerts) = nws::get_alerts().await.map_err(|e|
+    let (alerts, invalid_alerts, skipped) = nws::get_alerts().await.map_err(|e|
     {
         eprintln!("fetch_alerts: failed to get alerts: {e}");
         if e.is_timeout() { APIError::UpstreamTimeout } else { APIError::AlertsError }
     })?;
+    store_skipped_features(db, &skipped).await;
+    if skipped.too_many()
+    {
+        eprintln!("fetch_alerts: {} of {} alerts couldn't be deserialized, at least \
+            {SKIPPED_FEATURES_FAIL_PERCENT}%, so the alerts are not used",
+            skipped.features.len(), skipped.total);
+        return Err(APIError::AlertsError);
+    }
 
     // the invalid alerts are only kept for debugging, so failing
     // to store them doesn't fail the fetch
@@ -173,6 +185,31 @@ async fn store_invalid_avy_area(db: &DB, invalid_area: &InvalidAvyArea) -> mongo
     upsert_debug_record(&db.invalid_avy_areas_collection, filter, invalid_area).await
 }
 
+// stores the features that couldn't be deserialized. they are only kept for
+// debugging, so a failure to store them is logged and doesn't fail the fetch.
+// a feature with an id is upserted by its source and id, so a feature that
+// fails on every refresh keeps one record
+async fn store_skipped_features(db: &DB, skipped: &SkippedFeatures)
+{
+    for feature in skipped.features.iter()
+    {
+        let result = match &feature.feature_id
+        {
+            Some(feature_id) =>
+            {
+                let filter = doc! { "source": &feature.source, "feature_id": feature_id };
+                upsert_debug_record(&db.skipped_features_collection, filter, feature).await
+            }
+            None => db.skipped_features_collection.insert_one(feature).await.map(|_| ()),
+        };
+        if let Err(e) = result
+        {
+            eprintln!("store_skipped_features: failed to store {} feature {:?}: {e}",
+                feature.source, feature.feature_id);
+        }
+    }
+}
+
 // upserts a debugging record that has first_seen and last_seen fields,
 // keeping the first_seen of an existing record and updating everything else
 async fn upsert_debug_record<T>(collection: &Collection<T>, filter: Document, record: &T)
@@ -189,15 +226,24 @@ where
     Ok(())
 }
 
-// fetches the avalanche zones from NAC and stores any whose geometry
-// could not be converted
+// fetches the avalanche zones from NAC and stores any whose geometry could not
+// be converted or that couldn't be deserialized. fails if too many couldn't be
+// deserialized, for the same reason as fetch_alerts
 async fn fetch_avy(db: &DB) -> Result<AvalancheData, APIError>
 {
-    let (avy, invalid_areas) = nac::get_avy().await.map_err(|e|
+    let (avy, invalid_areas, skipped) = nac::get_avy().await.map_err(|e|
     {
         eprintln!("fetch_avy: failed to get avalanche data: {e}");
         if e.is_timeout() { APIError::UpstreamTimeout } else { APIError::NACError }
     })?;
+    store_skipped_features(db, &skipped).await;
+    if skipped.too_many()
+    {
+        eprintln!("fetch_avy: {} of {} avalanche zones couldn't be deserialized, at least \
+            {SKIPPED_FEATURES_FAIL_PERCENT}%, so the avalanche data is not used",
+            skipped.features.len(), skipped.total);
+        return Err(APIError::NACError);
+    }
 
     // the invalid zones are only kept for debugging, so failing
     // to store them doesn't fail the fetch

@@ -217,9 +217,10 @@ fn parse_features(features: serde_json::Value) -> (Alerts, Vec<InvalidAlert>)
     let count = features.as_array().expect("test features should be a json array").len();
     let raw: RawFeatures = serde_json::from_value(serde_json::json!({ "features": features }))
         .expect("test features should be a feature collection");
-    let (alerts, invalid) = nws::parse_alerts(raw);
-    assert_eq!(alerts.features.len(), count,
+    let (alerts, invalid, skipped) = nws::parse_alerts(raw);
+    assert!(skipped.features.is_empty(),
         "every test feature should deserialize, check the logged skipped features");
+    assert_eq!(alerts.features.len(), count);
     (alerts, invalid)
 }
 
@@ -312,7 +313,7 @@ fn parse_alerts_records_nothing_for_valid_alerts()
 {
     let raw: RawFeatures = serde_json::from_str(TEST_DATA)
         .expect("test data should be a geojson feature collection");
-    let (_, invalid) = nws::parse_alerts(raw);
+    let (_, invalid, _) = nws::parse_alerts(raw);
     assert!(invalid.is_empty(), "unexpected invalid alerts: {:?}",
         invalid.iter().map(|record| &record.alert_id).collect::<Vec<_>>());
 }
