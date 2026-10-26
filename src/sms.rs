@@ -477,7 +477,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         };
         // TODO: send the abbreviated forecast when forecast_vars.brief is set
         let forecast = RequestedForecast::from_properties(
-            forecast.properties, &forecast_vars.forecast_properties, end);
+            forecast, &forecast_vars.forecast_properties, end);
         (point, Some(forecast), active_alerts)
     };
 

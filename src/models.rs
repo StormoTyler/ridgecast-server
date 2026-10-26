@@ -88,6 +88,17 @@ pub struct User
 }                          
 // end user data models
 
+// data structures for checking and responding to trackers
+
+#[derive(Debug, Serialize, Deserialize)]              
+pub struct TrackerResponse
+{
+    pub User: UserPoint,
+    pub Alerts: Option<Vec<Alert>>,
+    pub Avy: Option<AvyProperties>,
+    pub Daily: Option<Properties>,
+}
+
 // data structures for nws points endpoint                   
 
 #[derive(Debug, Serialize, Deserialize, Clone)]              
@@ -351,7 +362,7 @@ pub struct TimeFloat
 pub struct ForecastResponse                                  
 {                                                            
     pub point: Point,                                        
-    pub forecast: Forecast,                                      
+    pub forecast: Properties,
     pub alerts: Vec<Alert>,                                      
 }                                                            
                                                              

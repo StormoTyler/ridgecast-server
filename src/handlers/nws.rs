@@ -300,10 +300,27 @@ pub async fn get_forecast(lat: f32, lon: f32, alerts: &AlertsSorted) ->
     Result<ForecastResponse, NWSError>
 {
     let point = get_point(lat, lon).await?;
+    let forecast = get_gridpoints(&point).await?;
+    //println!("forecast is: {:?}", forecast);
 
+    let active_alerts: Vec<Alert> =
+        check_alerts(alerts, &point);
+
+    let forecast_response = ForecastResponse
+    {
+        point: point,
+        forecast: forecast,
+        alerts: active_alerts,
+    };
+    Ok(forecast_response)
+}
+
+// gets a forecast's properties from the nws gridpoints endpoint 
+async fn get_gridpoints(point: &Point) -> Result<Properties, NWSError>
+{
     // retried once on a transient failure, like get_point
     let mut retried = false;
-    let forecast: Forecast = loop
+    loop
     {
         let result: Result<Forecast, NWSError> = async
         {
@@ -331,22 +348,10 @@ pub async fn get_forecast(lat: f32, lon: f32, alerts: &AlertsSorted) ->
         {
             Err(e) if !retried && e.is_transient() =>
             {
-                eprintln!("get_forecast: transient failure, retrying once: {e}");
+                eprintln!("get_gridpoints: transient failure, retrying once: {e}");
                 retried = true;
             }
-            result => break result?,
+            result => return result.map(|forecast| forecast.properties),
         }
-    };
-    //println!("forecast is: {:?}", forecast);
-
-    let active_alerts: Vec<Alert> =
-        check_alerts(alerts, &point);
-
-    let forecast_response = ForecastResponse
-    {
-        point: point,
-        forecast: forecast,
-        alerts: active_alerts,
-    };
-    Ok(forecast_response)
+    }
 }
