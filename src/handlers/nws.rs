@@ -24,7 +24,8 @@ const BASE_URL: &str = "https://api.weather.gov";
 static NWS_CLIENT: Lazy<Client> = Lazy::new(|| 
 {
     Client::builder()
-        .user_agent("User-Agent: (RidgeCast, stormotyler@gmail.com)")
+        // NWS requires contact info in the User-Agent, checked at startup in main
+        .user_agent(std::env::var("RIDGECAST_USER_AGENT").expect("RIDGECAST_USER_AGENT must be set"))
         // fail fast if the host is unreachable
         .connect_timeout(Duration::from_secs(10))
         // cap the whole request, including reading the body
@@ -316,7 +317,7 @@ pub async fn get_forecast(lat: f32, lon: f32, alerts: &AlertsSorted) ->
 }
 
 // gets a forecast's properties from the nws gridpoints endpoint 
-async fn get_gridpoints(point: &Point) -> Result<Properties, NWSError>
+pub async fn get_gridpoints(point: &Point) -> Result<Properties, NWSError>
 {
     // retried once on a transient failure, like get_point
     let mut retried = false;

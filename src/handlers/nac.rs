@@ -25,7 +25,8 @@ const BASE_URL: &str = "https://api.avalanche.org/v2/public/products/map-layer";
 static NAC_CLIENT: Lazy<Client> = Lazy::new(||                        
 {                                                                     
     Client::builder()                                                 
-        .user_agent("User-Agent: (RidgeCast, stormotyler@gmail.com)")
+        // NWS requires contact info in the User-Agent, checked at startup in main
+        .user_agent(std::env::var("RIDGECAST_USER_AGENT").expect("RIDGECAST_USER_AGENT must be set"))
         // fail fast if the host is unreachable
         .connect_timeout(Duration::from_secs(10))
         // cap the whole request, including reading the body

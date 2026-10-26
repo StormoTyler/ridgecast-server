@@ -20,4 +20,5 @@ geo-types = "0.7.20"
 futures = "0.3.34"
 chrono = { version = "0.4.45", features = ["serde"] }
 chrono-tz = "0.10.4"
+dotenvy = "0.15"
 

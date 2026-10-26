@@ -86,6 +86,16 @@ impl IntoResponse for APIError
 #[tokio::main]                                                                
 async fn main() -> Result<(), Box<dyn std::error::Error>>                     
 {                                                                             
+    // local development only. in production the host sets the variables,
+    // and dotenvy never overwrites a variable that's already set
+    dotenvy::dotenv().ok();
+    // checked here so a missing value fails at startup, not on the first NWS or NAC request
+    // or by silently connecting to the default local database
+    for name in ["RIDGECAST_USER_AGENT", "DATABASE_URL", "RIDGECAST_DB"]
+    {
+        std::env::var(name).map_err(|_| format!("{name} must be set"))?;
+    }
+
     let db = DB::init().await?;
 
     // refresh the snapshots in the background, so startup doesn't wait on NWS or NAC.
