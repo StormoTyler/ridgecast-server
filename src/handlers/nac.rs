@@ -41,14 +41,6 @@ pub enum NACError
     APICallError(#[from] reqwest::Error),
     #[error("json parsing error: {0}")]
     JsonError(#[from] serde_json::Error),
-    #[error("could not complete avalanche danger check")]
-    CheckError,
-    #[error("no current avalanche forecast available")]
-    NoForecastError,
-    #[error("the avalanche forecast has passed its end_date")]
-    ExpiredForecastError,
-    #[error("relevant avalanche center is in its off season")]
-    OffSeasonError,
 }
 
 impl NACError
@@ -66,7 +58,6 @@ impl NACError
         {
             NACError::APICallError(e) => e.is_decode(),
             NACError::JsonError(_) => true,
-            _ => false,
         }
     }
 }
@@ -169,13 +160,27 @@ pub fn build_avy_map(mut features: Vec<AvyArea>) -> (Vec<AvyArea>, Vec<InvalidAv
     (features, invalid_areas)
 }
 
-// checks whether a point intersects with an avalanche forecast zone
-// and returns the area name, avalanche center, and forecast danger
-// errors if the zone's center is in its off season, or the zone has no valid
-// forecast: one with a start_date and an end_date that hasn't passed.
-// a forecast that hasn't started yet is valid
-pub async fn check_avy_geometry(point: &Point, avy_data: &AvalancheData, now: DateTime<Utc>) ->
-    Result<Option<AvyProperties>, NACError>
+// the forecast state of the avalanche zone containing a point. these are
+// normal states, not errors, so callers match each one instead of logging them
+#[derive(Debug, Clone, PartialEq)]
+pub enum ZoneForecast
+{
+    // a valid forecast: it has a start_date and an end_date that hasn't passed.
+    // a forecast that hasn't started yet is valid
+    Current(AvyProperties),
+    // the point isn't in any zone
+    NoZone,
+    // the zone's center is in its off season
+    OffSeason,
+    // the zone has no start_date or no end_date
+    NoForecast,
+    // the zone's forecast has passed its end_date
+    Expired,
+}
+
+// checks which avalanche forecast zone a point intersects with
+// and returns the state of its forecast
+pub async fn check_avy_geometry(point: &Point, avy_data: &AvalancheData, now: DateTime<Utc>) -> ZoneForecast
 {
     let coordinates = point.geometry.coordinates;
 
@@ -189,21 +194,21 @@ pub async fn check_avy_geometry(point: &Point, avy_data: &AvalancheData, now: Da
     let Some(area) = zone
     else
     {
-        return Ok(None);
+        return ZoneForecast::NoZone;
     };
 
     // off season is checked first, since off season zones can keep an old start_date
     if area.properties.off_season == Some(true)
     {
-        return Err(NACError::OffSeasonError);
+        return ZoneForecast::OffSeason;
     }
     let start = area.properties.start_date.as_ref().map(DateTimeTypes::to_utc);
     let end = area.properties.end_date.as_ref().map(DateTimeTypes::to_utc);
     match tracking::validity(start, end, now)
     {
-        Validity::Current | Validity::NotStarted => Ok(Some(area.properties.clone())),
-        Validity::Expired => Err(NACError::ExpiredForecastError),
-        Validity::NoStart | Validity::NoEnd => Err(NACError::NoForecastError),
+        Validity::Current | Validity::NotStarted => ZoneForecast::Current(area.properties.clone()),
+        Validity::Expired => ZoneForecast::Expired,
+        Validity::NoStart | Validity::NoEnd => ZoneForecast::NoForecast,
     }
 }
 
@@ -242,7 +247,7 @@ pub async fn check_avy_tracker(user_point: &mut UserPoint, snapshot: &Snapshot<A
     }
     match check_avy_geometry(&user_point.point, &snapshot.data, now).await
     {
-        Ok(Some(current)) =>
+        ZoneForecast::Current(current) =>
         {
             let was_lost = user_point.avy_lost.is_raised();
             user_point.avy_lost.clear();
@@ -265,7 +270,7 @@ pub async fn check_avy_tracker(user_point: &mut UserPoint, snapshot: &Snapshot<A
         }
         // sent once, even after another kind of loss was notified, since the
         // center may not publish another forecast before the tracker ends
-        Err(NACError::OffSeasonError) =>
+        ZoneForecast::OffSeason =>
         {
             if user_point.avy.is_none() || !user_point.avy_off_season.raise()
             {
@@ -274,8 +279,8 @@ pub async fn check_avy_tracker(user_point: &mut UserPoint, snapshot: &Snapshot<A
             user_point.avy_lost.raise();
             AvyTrackerUpdate::OffSeason
         }
-        // no zone, or no valid forecast
-        _ => record_avy_loss(user_point, AvyTrackerUpdate::ForecastLost),
+        ZoneForecast::NoZone | ZoneForecast::NoForecast | ZoneForecast::Expired =>
+            record_avy_loss(user_point, AvyTrackerUpdate::ForecastLost),
     }
 }
 

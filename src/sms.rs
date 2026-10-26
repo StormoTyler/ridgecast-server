@@ -14,7 +14,7 @@ use crate::daily_forecast;
 use crate::database::DB;
 use crate::snapshots::{self, Snapshot};
 use crate::handlers::{nac, nws};
-use crate::handlers::nac::NACError;
+use crate::handlers::nac::ZoneForecast;
 use crate::models::{Alert, AlertsSorted, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
     ForecastResponse, ForecastVars, IntVec, NWSError, Point, Properties,
     UserPoint};
@@ -516,26 +516,20 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         }
         Some(avy_data) if track_avy => match nac::check_avy_geometry(&point, avy_data, now).await
         {
-            Ok(zone) => zone,
+            ZoneForecast::Current(zone) => Some(zone),
+            ZoneForecast::NoZone => None,
             // the zone is still tracked with no stored forecast,
             // so its next forecast is reported as new
-            Err(NACError::NoForecastError | NACError::ExpiredForecastError) =>
+            ZoneForecast::NoForecast | ZoneForecast::Expired =>
             {
                 avy_notice = Some("There is no current avalanche forecast for this location.");
                 None
             }
             // the zone is still tracked, so the first forecast
             // after its season starts is reported as new
-            Err(NACError::OffSeasonError) =>
+            ZoneForecast::OffSeason =>
             {
                 avy_notice = Some("The avalanche center for this location is in its off season.");
-                None
-            }
-            // the zone check could not be completed
-            Err(e) =>
-            {
-                eprintln!("get_requested_forecast: {e}");
-                avy_notice = Some("Could not retrieve avalanche forecast data at this time.");
                 None
             }
         },
@@ -616,26 +610,17 @@ fn nws_error(call: &str, lat: f32, lon: f32, e: NWSError, fallback: APIError) ->
     if e.is_timeout() { APIError::UpstreamTimeout } else { fallback }
 }
 
-// returns the forecast of the avalanche zone containing the point, if any
-async fn find_avy_zone(point: &Point, avy_data: &AvalancheData, now: DateTime<Utc>) -> Option<AvyProperties>
-{
-    match nac::check_avy_geometry(point, avy_data, now).await
-    {
-        Ok(zone) => zone,
-        // no zone, or a zone without a current forecast, is reported as no zone
-        Err(e) =>
-        {
-            eprintln!("find_avy_zone: {e}");
-            None
-        }
-    }
-}
-
 // checks if the point is in any avalanche forecast zone
 // returns the avy_properties for the area if danger_level >= 3
 async fn get_avy_no_tracker(point: &Point, avy_data: &AvalancheData, now: DateTime<Utc>) -> Option<AvyProperties>
 {
-    let zone = find_avy_zone(point, avy_data, now).await;
-    // NAC rates danger 1 (low) to 5 (extreme), 3 is considerable
-    zone.filter(|properties| properties.danger_level.is_some_and(|level| level >= 3))
+    match nac::check_avy_geometry(point, avy_data, now).await
+    {
+        // NAC rates danger 1 (low) to 5 (extreme), 3 is considerable
+        ZoneForecast::Current(zone) =>
+            Some(zone).filter(|properties| properties.danger_level.is_some_and(|level| level >= 3)),
+        // without track_avy, a zone without a valid forecast isn't reported
+        ZoneForecast::NoZone | ZoneForecast::OffSeason | ZoneForecast::NoForecast
+            | ZoneForecast::Expired => None,
+    }
 }

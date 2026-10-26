@@ -1,7 +1,7 @@
 // tests for nac::check_avy_geometry and nac::check_avy_tracker against a saved NAC map-layer response
 use chrono::{DateTime, TimeZone, Utc};
 
-use crate::handlers::nac::{self, AvyTrackerUpdate, NACError};
+use crate::handlers::nac::{self, AvyTrackerUpdate, ZoneForecast};
 use crate::snapshots::Snapshot;
 use crate::models::{AvalancheData, AvyArea, AvyProperties, DateTimeTypes, ForecastVars,
     InvalidAvyArea, GeometryErrorReason,
@@ -93,9 +93,12 @@ fn current_forecast(avy: &AvalancheData) -> AvyProperties
 // runs check_avy_geometry and returns the name of the matched zone, if any
 async fn matched_name(avy: &AvalancheData, lat: f64, lon: f64) -> Option<String>
 {
-    nac::check_avy_geometry(&make_point(lat, lon), avy, test_now()).await
-        .expect("point should be checkable")
-        .and_then(|properties| properties.name)
+    match nac::check_avy_geometry(&make_point(lat, lon), avy, test_now()).await
+    {
+        ZoneForecast::Current(properties) => properties.name,
+        ZoneForecast::NoZone => None,
+        other => panic!("geometry test zones should have a current forecast, got {other:?}"),
+    }
 }
 
 // runs check_avy_tracker on fresh avalanche data
@@ -125,9 +128,12 @@ fn test_zones_have_expected_geometry()
 async fn test_point_inside_polygon_zone()
 {
     let avy = load_avy();
-    let zone = nac::check_avy_geometry(&make_point(48.08, -113.86), &avy, test_now()).await
-        .expect("point should be checkable");
-    let properties = zone.expect("point should be inside Swan Range");
+    let ZoneForecast::Current(properties) =
+        nac::check_avy_geometry(&make_point(48.08, -113.86), &avy, test_now()).await
+    else
+    {
+        panic!("point should be inside Swan Range, which has a current forecast");
+    };
     assert_eq!(properties.name.as_deref(), Some(POLYGON_ZONE));
     assert_eq!(properties.center.as_deref(), Some("Flathead Avalanche Center"));
 }
@@ -198,7 +204,7 @@ async fn test_point_in_zone_without_forecast()
     // Central Cascades is in season but has no start_date
     let avy = load_avy();
     let result = nac::check_avy_geometry(&make_point(44.19, -121.75), &avy, test_now()).await;
-    assert!(matches!(result, Err(NACError::NoForecastError)));
+    assert_eq!(result, ZoneForecast::NoForecast);
 }
 
 #[tokio::test]
@@ -208,7 +214,7 @@ async fn test_point_in_off_season_zone()
     // off season takes priority
     let avy = load_avy();
     let result = nac::check_avy_geometry(&make_point(61.13, -149.53), &avy, test_now()).await;
-    assert!(matches!(result, Err(NACError::OffSeasonError)));
+    assert_eq!(result, ZoneForecast::OffSeason);
 }
 
 #[tokio::test]
@@ -304,7 +310,7 @@ async fn test_forecast_past_end_date_is_expired()
 {
     let avy = load_avy();
     let result = nac::check_avy_geometry(&make_point(43.74, -110.80), &avy, after_tetons_end()).await;
-    assert!(matches!(result, Err(NACError::ExpiredForecastError)));
+    assert_eq!(result, ZoneForecast::Expired);
 }
 
 #[tokio::test]
@@ -313,9 +319,13 @@ async fn test_forecast_not_started_is_valid()
     // before the Tetons forecast starts at 2026-10-02 22:49 UTC
     let avy = load_avy();
     let before_start = Utc.with_ymd_and_hms(2026, 10, 2, 0, 0, 0).unwrap();
-    let zone = nac::check_avy_geometry(&make_point(43.74, -110.80), &avy, before_start).await
-        .expect("a forecast that hasn't started should be valid");
-    assert_eq!(zone.and_then(|properties| properties.name).as_deref(), Some(FORECAST_ZONE));
+    let ZoneForecast::Current(properties) =
+        nac::check_avy_geometry(&make_point(43.74, -110.80), &avy, before_start).await
+    else
+    {
+        panic!("a forecast that hasn't started should be valid");
+    };
+    assert_eq!(properties.name.as_deref(), Some(FORECAST_ZONE));
 }
 
 #[tokio::test]
@@ -324,7 +334,7 @@ async fn test_forecast_without_end_date_is_invalid()
     let mut avy = load_avy();
     find_zone_mut(&mut avy, FORECAST_ZONE).properties.end_date = None;
     let result = nac::check_avy_geometry(&make_point(43.74, -110.80), &avy, test_now()).await;
-    assert!(matches!(result, Err(NACError::NoForecastError)));
+    assert_eq!(result, ZoneForecast::NoForecast);
 }
 
 #[tokio::test]
