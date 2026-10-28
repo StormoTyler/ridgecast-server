@@ -9,14 +9,15 @@ use chrono::{DateTime, Days, TimeZone, Utc};
 use serde::Serialize;
 
 // local modules
-use crate::errors;
 use crate::daily_forecast;
 use crate::database;
-use crate::snapshots;
+use crate::errors;
 use crate::handlers::{nac, nws};
-use crate::models::{Alert, AlertsSorted, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
-    ForecastResponse, ForecastVars, IntVec, Point, Properties,
-    Snapshot, UserPoint};
+use crate::models::{
+    Alert, AlertsSorted, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
+    ForecastResponse, ForecastVars, IntVec, Point, Properties, Snapshot, UserPoint,
+};
+use crate::snapshots;
 
 const SUPPORTED_VERSION: &str = "1";
 // one week
@@ -29,8 +30,7 @@ const MAX_FORECAST_LENGTH: u32 = 7;
 const MAX_TRACKER_NAME_LENGTH: usize = 10;
 
 #[derive(Debug, Clone)]
-pub struct SmsRequest
-{
+pub struct SmsRequest {
     pub lat: f32,
     pub lon: f32,
     // time in hours that trackers created by this request remain active
@@ -46,8 +46,7 @@ pub struct SmsRequest
 }
 
 #[derive(Debug, Error, PartialEq)]
-pub enum SmsParseError
-{
+pub enum SmsParseError {
     // the message is not a RidgeCast request at all
     #[error("message is not a RidgeCast request")]
     NotARequest,
@@ -71,31 +70,25 @@ pub enum SmsParseError
     InvalidTrackerName(String),
 }
 
-impl FromStr for SmsRequest
-{
+impl FromStr for SmsRequest {
     type Err = SmsParseError;
 
-    fn from_str(message: &str) -> Result<Self, Self::Err>
-    {
+    fn from_str(message: &str) -> Result<Self, Self::Err> {
         // split_whitespace also trims and allows repeated spaces
         let fields: Vec<&str> = message.split_whitespace().collect();
 
         // the prefix is checked before the field count, so a future
         // version with a different layout reports the version instead
-        let version = match fields.first()
-        {
+        let version = match fields.first() {
             Some(prefix) => parse_prefix(prefix)?,
             None => return Err(SmsParseError::NotARequest),
         };
-        if version != SUPPORTED_VERSION
-        {
+        if version != SUPPORTED_VERSION {
             return Err(SmsParseError::UnsupportedVersion(version.to_string()));
         }
 
         // everything after the forecast length is the tracker name
-        let [_, lat, lon, flags, duration, length, ref name @ ..] = fields[..]
-        else
-        {
+        let [_, lat, lon, flags, duration, length, ref name @ ..] = fields[..] else {
             return Err(SmsParseError::WrongFieldCount(fields.len()));
         };
 
@@ -103,24 +96,21 @@ impl FromStr for SmsRequest
             .ok_or_else(|| SmsParseError::InvalidLatitude(lat.to_string()))?;
         let lon = parse_coordinate(lon, 3, 180.0)
             .ok_or_else(|| SmsParseError::InvalidLongitude(lon.to_string()))?;
-        let forecast_vars = parse_flags(flags)
-            .ok_or_else(|| SmsParseError::InvalidFlags(flags.to_string()))?;
+        let forecast_vars =
+            parse_flags(flags).ok_or_else(|| SmsParseError::InvalidFlags(flags.to_string()))?;
         // daily_forecast with a duration that ends before the next 6 AM is
         // prevented by the apps (see docs/sms-format.md), not checked here
-        let creates_tracker = forecast_vars.track_alerts || forecast_vars.track_avy
-            || forecast_vars.daily_forecast;
+        let creates_tracker =
+            forecast_vars.track_alerts || forecast_vars.track_avy || forecast_vars.daily_forecast;
         let tracker_duration = parse_tracker_duration(duration, creates_tracker)
             .ok_or_else(|| SmsParseError::InvalidTrackerDuration(duration.to_string()))?;
         let forecast_length = parse_forecast_length(length)
             .ok_or_else(|| SmsParseError::InvalidForecastLength(length.to_string()))?;
-        let tracker_name = match (creates_tracker, name)
-        {
+        let tracker_name = match (creates_tracker, name) {
             (true, []) => return Err(SmsParseError::MissingTrackerName),
-            (true, words) =>
-            {
+            (true, words) => {
                 let name = words.join(" ");
-                match is_valid_tracker_name(&name)
-                {
+                match is_valid_tracker_name(&name) {
                     true => Some(name),
                     false => return Err(SmsParseError::InvalidTrackerName(name)),
                 }
@@ -130,23 +120,27 @@ impl FromStr for SmsRequest
             (false, _) => return Err(SmsParseError::WrongFieldCount(fields.len())),
         };
 
-        Ok(SmsRequest { lat, lon, tracker_duration, forecast_length, tracker_name, forecast_vars })
+        Ok(SmsRequest {
+            lat,
+            lon,
+            tracker_duration,
+            forecast_length,
+            tracker_name,
+            forecast_vars,
+        })
     }
 }
 
 // returns the version digits from a "RC<version>" prefix
-fn parse_prefix(prefix: &str) -> Result<&str, SmsParseError>
-{
+fn parse_prefix(prefix: &str) -> Result<&str, SmsParseError> {
     // "RC" must be followed by digits only, so ordinary
     // texts like "RC car for sale" are not read as requests
-    let version = match prefix.get(..2)
-    {
+    let version = match prefix.get(..2) {
         Some(rc) if rc.eq_ignore_ascii_case("RC") => &prefix[2..],
         _ => return Err(SmsParseError::NotARequest),
     };
 
-    if version.is_empty() || !version.bytes().all(|b| b.is_ascii_digit())
-    {
+    if version.is_empty() || !version.bytes().all(|b| b.is_ascii_digit()) {
         return Err(SmsParseError::NotARequest);
     }
     Ok(version)
@@ -154,20 +148,17 @@ fn parse_prefix(prefix: &str) -> Result<&str, SmsParseError>
 
 // accepts -?<1 to max_int_digits digits>[.<1 to 4 digits>] within ±limit
 // rust's float parser alone would also accept "+1", "1e2", "inf", and "NaN"
-fn parse_coordinate(value: &str, max_int_digits: usize, limit: f32) -> Option<f32>
-{
+fn parse_coordinate(value: &str, max_int_digits: usize, limit: f32) -> Option<f32> {
     let unsigned = value.strip_prefix('-').unwrap_or(value);
-    let (int_part, frac_part) = match unsigned.split_once('.')
-    {
+    let (int_part, frac_part) = match unsigned.split_once('.') {
         Some((int_part, frac_part)) => (int_part, Some(frac_part)),
         None => (unsigned, None),
     };
 
-    let is_digits = |s: &str, max: usize|
-        (1..=max).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit());
+    let is_digits =
+        |s: &str, max: usize| (1..=max).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit());
 
-    if !is_digits(int_part, max_int_digits)
-    {
+    if !is_digits(int_part, max_int_digits) {
         return None;
     }
     if let Some(frac_part) = frac_part
@@ -177,8 +168,7 @@ fn parse_coordinate(value: &str, max_int_digits: usize, limit: f32) -> Option<f3
     }
 
     let parsed: f32 = value.parse().ok()?;
-    if parsed.abs() > limit
-    {
+    if parsed.abs() > limit {
         return None;
     }
     Some(parsed)
@@ -186,31 +176,25 @@ fn parse_coordinate(value: &str, max_int_digits: usize, limit: f32) -> Option<f3
 
 // hours a tracker created by the request stays active, 1 to 3 digits up to
 // MAX_TRACKER_DURATION. 0 means no tracker, so it is rejected when a tracker flag is set
-fn parse_tracker_duration(value: &str, creates_tracker: bool) -> Option<u32>
-{
-    if !(1..=3).contains(&value.len()) || !value.bytes().all(|b| b.is_ascii_digit())
-    {
+fn parse_tracker_duration(value: &str, creates_tracker: bool) -> Option<u32> {
+    if !(1..=3).contains(&value.len()) || !value.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
     let hours: u32 = value.parse().ok()?;
     // sets the tracker duration to the maximum duration
     // if the requested tracker exceeds the maximum duration
-    if hours > MAX_TRACKER_DURATION
-    {
+    if hours > MAX_TRACKER_DURATION {
         return Some(168);
     }
-    if creates_tracker && hours == 0
-    {
+    if creates_tracker && hours == 0 {
         return None;
     }
     Some(hours)
 }
 
 // days of forecast in the reply, one digit from 1 to MAX_FORECAST_LENGTH
-fn parse_forecast_length(value: &str) -> Option<u32>
-{
-    if value.len() != 1
-    {
+fn parse_forecast_length(value: &str) -> Option<u32> {
+    if value.len() != 1 {
         return None;
     }
     let days: u32 = value.parse().ok()?;
@@ -220,38 +204,34 @@ fn parse_forecast_length(value: &str) -> Option<u32>
 // a tracker name is 1 to MAX_TRACKER_NAME_LENGTH characters, counting the single
 // spaces between words, and uses only letters, digits, and - ' . # & ( ) /,
 // which are all in the GSM-7 basic character set
-fn is_valid_tracker_name(name: &str) -> bool
-{
+fn is_valid_tracker_name(name: &str) -> bool {
     (1..=MAX_TRACKER_NAME_LENGTH).contains(&name.len())
-        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b" -'.#&()/".contains(&b))
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b" -'.#&()/".contains(&b))
 }
 
 // flags are exactly 4 hex digits, one bit per ForecastVars field
-fn parse_flags(value: &str) -> Option<ForecastVars>
-{
-    if value.len() != 4 || !value.bytes().all(|b| b.is_ascii_hexdigit())
-    {
+fn parse_flags(value: &str) -> Option<ForecastVars> {
+    if value.len() != 4 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let bits = u16::from_str_radix(value, 16).ok()?;
     // unassigned bits are rejected, so an app built for a later
     // version of the bit table is not silently misread
-    if bits & !USED_FLAG_BITS != 0
-    {
+    if bits & !USED_FLAG_BITS != 0 {
         return None;
     }
     let bit = |n: u16| bits & (1 << n) != 0;
 
     // bit order must match the table in docs/sms-format.md
-    Some(ForecastVars
-    {
+    Some(ForecastVars {
         track_alerts: bit(0),
         no_forecast: bit(1),
         track_avy: bit(2),
         brief: bit(12),
         daily_forecast: bit(13),
-        forecast_properties: ForecastProperties
-        {
+        forecast_properties: ForecastProperties {
             elevation: bit(3),
             wet_bulb_globe_temperature: bit(4),
             heat_risk: bit(5),
@@ -269,8 +249,7 @@ fn parse_flags(value: &str) -> Option<ForecastVars>
 // included, the optional ones only when their flag is set
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RequestedForecast
-{
+pub struct RequestedForecast {
     pub temperature: FloatVec,
     pub max_temperature: FloatVec,
     pub min_temperature: FloatVec,
@@ -302,8 +281,7 @@ pub struct RequestedForecast
 }
 
 #[derive(Debug, Serialize)]
-pub struct SmsForecastResponse
-{
+pub struct SmsForecastResponse {
     pub point: Point,
     // None when the request set the no_forecast flag
     pub forecast: Option<RequestedForecast>,
@@ -335,22 +313,21 @@ pub struct SmsForecastResponse
     pub tracker_notice: Option<&'static str>,
 }
 
-impl RequestedForecast
-{
+impl RequestedForecast {
     // end is when the last requested forecast day ends, see forecast_end
-    fn from_properties(properties: Properties, flags: &ForecastProperties, end: DateTime<Utc>)
-        -> Self
-    {
+    fn from_properties(
+        properties: Properties,
+        flags: &ForecastProperties,
+        end: DateTime<Utc>,
+    ) -> Self {
         // keeps an optional field only when its flag is set
-        fn keep<T>(flag: bool, value: T) -> Option<T>
-        {
+        fn keep<T>(flag: bool, value: T) -> Option<T> {
             flag.then_some(value)
         }
         let floats = |series| trim_floats(series, end);
         let ints = |series| trim_ints(series, end);
 
-        RequestedForecast
-        {
+        RequestedForecast {
             temperature: floats(properties.temperature),
             max_temperature: floats(properties.max_temperature),
             min_temperature: floats(properties.min_temperature),
@@ -363,13 +340,17 @@ impl RequestedForecast
             wind_speed: floats(properties.wind_speed),
             elevation: keep(flags.elevation, properties.elevation),
             // these are already optional because NWS leaves them out for some areas
-            wet_bulb_globe_temperature: properties.wet_bulb_globe_temperature
-                .filter(|_| flags.wet_bulb_globe_temperature).map(floats),
+            wet_bulb_globe_temperature: properties
+                .wet_bulb_globe_temperature
+                .filter(|_| flags.wet_bulb_globe_temperature)
+                .map(floats),
             heat_risk: properties.heat_risk.filter(|_| flags.heat_risk).map(ints),
             relative_humidity: keep(flags.relative_humidity, properties.relative_humidity)
                 .map(ints),
             visibility: keep(flags.visibility, properties.visibility).map(floats),
-            ceiling_height: properties.ceiling_height.filter(|_| flags.ceiling_height)
+            ceiling_height: properties
+                .ceiling_height
+                .filter(|_| flags.ceiling_height)
                 .map(floats),
             pressure: keep(flags.pressure, properties.pressure).map(floats),
             snow_level: keep(flags.snow_level, properties.snow_level).map(floats),
@@ -380,42 +361,45 @@ impl RequestedForecast
 
 // when the last of `days` forecast days ends: local midnight after the last day,
 // counting today as the first day
-pub(crate) fn forecast_end<T: TimeZone>(tz: &T, now: DateTime<Utc>, days: u32) -> DateTime<Utc>
-{
+pub(crate) fn forecast_end<T: TimeZone>(tz: &T, now: DateTime<Utc>, days: u32) -> DateTime<Utc> {
     let fallback = now + chrono::Duration::days(days.into());
-    let Some(last_midnight) = now.with_timezone(tz).date_naive()
+    let Some(last_midnight) = now
+        .with_timezone(tz)
+        .date_naive()
         .checked_add_days(Days::new(days.into()))
         .and_then(|date| date.and_hms_opt(0, 0, 0))
-    else
-    {
+    else {
         return fallback;
     };
     // earliest() is None only where a daylight saving change skips midnight,
     // which does not happen in US time zones
-    tz.from_local_datetime(&last_midnight).earliest()
+    tz.from_local_datetime(&last_midnight)
+        .earliest()
         .map_or(fallback, |end| end.with_timezone(&Utc))
 }
 
 // true when an NWS validTime interval such as "2026-10-06T13:00:00+00:00/PT1H"
 // starts before end. a value without a readable time is dropped
-fn starts_before(valid_time: &Option<String>, end: DateTime<Utc>) -> bool
-{
-    valid_time.as_deref()
+fn starts_before(valid_time: &Option<String>, end: DateTime<Utc>) -> bool {
+    valid_time
+        .as_deref()
         .and_then(|time| time.split('/').next())
         .and_then(|start| DateTime::parse_from_rfc3339(start).ok())
         .is_some_and(|start| start < end)
 }
 
 // keep the values of a forecast series that start before end
-pub(crate) fn trim_floats(mut series: FloatVec, end: DateTime<Utc>) -> FloatVec
-{
-    series.values.retain(|value| starts_before(&value.valid_time, end));
+pub(crate) fn trim_floats(mut series: FloatVec, end: DateTime<Utc>) -> FloatVec {
+    series
+        .values
+        .retain(|value| starts_before(&value.valid_time, end));
     series
 }
 
-pub(crate) fn trim_ints(mut series: IntVec, end: DateTime<Utc>) -> IntVec
-{
-    series.values.retain(|value| starts_before(&value.valid_time, end));
+pub(crate) fn trim_ints(mut series: IntVec, end: DateTime<Utc>) -> IntVec {
+    series
+        .values
+        .retain(|value| starts_before(&value.valid_time, end));
     series
 }
 
@@ -424,10 +408,19 @@ pub(crate) fn trim_ints(mut series: IntVec, end: DateTime<Utc>) -> IntVec
 // returns the avalanche zone's data at any danger level when track_avy is True,
 // and only at danger level 3 or higher when it is False
 // user is the sender's phone number, which identifies the user
-pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &database::DB)
-    -> Result<SmsForecastResponse, errors::APIError>
-{
-    let SmsRequest { lat, lon, tracker_duration, forecast_length, tracker_name, forecast_vars } = request;
+pub async fn get_requested_forecast(
+    request: &SmsRequest,
+    user: &str,
+    db: &database::DB,
+) -> Result<SmsForecastResponse, errors::APIError> {
+    let SmsRequest {
+        lat,
+        lon,
+        tracker_duration,
+        forecast_length,
+        tracker_name,
+        forecast_vars,
+    } = request;
     let (lat, lon) = (*lat, *lon);
 
     // alerts that can't be loaded don't fail the request, the forecast is still sent.
@@ -435,15 +428,12 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &datab
     // aren't read as no active alerts
     let mut alerts_notice = None;
     let mut alerts_stale_notice = None;
-    let alerts = match snapshots::load_alerts(db).await
-    {
-        Ok(Snapshot { data, stale }) =>
-        {
+    let alerts = match snapshots::load_alerts(db).await {
+        Ok(Snapshot { data, stale }) => {
             alerts_stale_notice = stale.then_some("Alerts may be out of date.");
             data
         }
-        Err(e) =>
-        {
+        Err(e) => {
             eprintln!("get_requested_forecast: alerts unavailable: {e}");
             alerts_notice = Some("Alerts could not be checked.");
             // matches no point, so active_alerts is empty
@@ -451,30 +441,31 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &datab
         }
     };
 
-    let (point, forecast, active_alerts) = if forecast_vars.no_forecast
-    {
+    let (point, forecast, active_alerts) = if forecast_vars.no_forecast {
         // the point is still needed to check alerts and create trackers
-        let point = nws::get_point(lat, lon).await
+        let point = nws::get_point(lat, lon)
+            .await
             .map_err(|e| nws_error("get_point", lat, lon, e, errors::APIError::NWSError))?;
         let active_alerts = nws::check_alerts(&alerts, &point);
         (point, None, active_alerts)
-    }
-    else
-    {
-        let ForecastResponse { point, forecast, alerts: active_alerts } =
-            nws::get_forecast(lat, lon, &alerts).await
+    } else {
+        let ForecastResponse {
+            point,
+            forecast,
+            alerts: active_alerts,
+        } = nws::get_forecast(lat, lon, &alerts)
+            .await
             .map_err(|e| nws_error("get_forecast", lat, lon, e, errors::APIError::ForecastError))?;
         // forecast days are local days at the location. NWS reports a time zone for
         // every point it covers, so UTC days are only a fallback
         let now = Utc::now();
-        let end = match daily_forecast::point_time_zone(&point)
-        {
+        let end = match daily_forecast::point_time_zone(&point) {
             Some(tz) => forecast_end(&tz, now, *forecast_length),
             None => forecast_end(&Utc, now, *forecast_length),
         };
         // TODO: send the abbreviated forecast when forecast_vars.brief is set
-        let forecast = RequestedForecast::from_properties(
-            forecast, &forecast_vars.forecast_properties, end);
+        let forecast =
+            RequestedForecast::from_properties(forecast, &forecast_vars.forecast_properties, end);
         (point, Some(forecast), active_alerts)
     };
 
@@ -484,48 +475,39 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &datab
     let track_avy = forecast_vars.track_avy;
     // the user may not have asked about avalanches, so unavailable avalanche
     // data should not fail the rest of the request
-    let avy_data = match snapshots::load_avy(db).await
-    {
-        Ok(Snapshot { data, stale }) =>
-        {
+    let avy_data = match snapshots::load_avy(db).await {
+        Ok(Snapshot { data, stale }) => {
             // sent with or without track_avy, since stale data could miss
             // a danger level of 3 or higher
-            if stale
-            {
+            if stale {
                 avy_stale_notice = Some("Avalanche data may be out of date.");
             }
             Some(data)
         }
-        Err(e) =>
-        {
+        Err(e) => {
             eprintln!("get_requested_forecast: avalanche data unavailable: {e}");
             None
         }
     };
-    let avy = match &avy_data
-    {
+    let avy = match &avy_data {
         // the notice is sent with or without track_avy, since
         // danger level 3 or higher could not be ruled out
-        None =>
-        {
+        None => {
             avy_notice = Some("Could not retrieve avalanche forecast data at this time.");
             None
         }
-        Some(avy_data) if track_avy => match nac::check_avy_geometry(&point, avy_data, now).await
-        {
+        Some(avy_data) if track_avy => match nac::check_avy_geometry(&point, avy_data, now).await {
             nac::ZoneForecast::Current(zone) => Some(zone.clone()),
             nac::ZoneForecast::NoZone => None,
             // the zone is still tracked with no stored forecast,
             // so its next forecast is reported as new
-            nac::ZoneForecast::NoForecast | nac::ZoneForecast::Expired =>
-            {
+            nac::ZoneForecast::NoForecast | nac::ZoneForecast::Expired => {
                 avy_notice = Some("There is no current avalanche forecast for this location.");
                 None
             }
             // the zone is still tracked, so the first forecast
             // after its season starts is reported as new
-            nac::ZoneForecast::OffSeason =>
-            {
+            nac::ZoneForecast::OffSeason => {
                 avy_notice = Some("The avalanche center for this location is in its off season.");
                 None
             }
@@ -537,39 +519,38 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &datab
     let expires = time_added + chrono::Duration::hours((*tracker_duration).into());
     let mut daily_notice = None;
     // the first daily forecast, None when the request has no daily forecast
-    let next_daily_forecast = if forecast_vars.daily_forecast
-    {
-        match daily_forecast::point_time_zone(&point)
-        {
+    let next_daily_forecast = if forecast_vars.daily_forecast {
+        match daily_forecast::point_time_zone(&point) {
             // None when the tracker expires before the next 6 AM. the apps do not
             // send such a request (see docs/sms-format.md)
             Some(tz) => daily_forecast::next_daily_forecast(tz, time_added, expires),
-            None =>
-            {
-                eprintln!("get_requested_forecast: no usable time zone for {lat},{lon}: {:?}",
-                    point.properties.time_zone);
+            None => {
+                eprintln!(
+                    "get_requested_forecast: no usable time zone for {lat},{lon}: {:?}",
+                    point.properties.time_zone
+                );
                 daily_notice = Some("Daily forecasts are not available for this location.");
                 None
             }
         }
-    }
-    else
-    {
+    } else {
         None
     };
     // a tracker that would never send a daily forecast does not track it
     let daily_forecast = next_daily_forecast.is_some();
 
     let mut tracker_notice = None;
-    if forecast_vars.track_alerts || track_avy || daily_forecast
-    {
+    if forecast_vars.track_alerts || track_avy || daily_forecast {
         // one tracker covers every option, its forecast_vars record which are on
-        let user_point = UserPoint
-        {
+        let user_point = UserPoint {
             id: None,
             user: user.to_string(),
             tracker_name: tracker_name.clone(),
-            forecast_vars: ForecastVars { track_avy, daily_forecast, ..forecast_vars.clone() },
+            forecast_vars: ForecastVars {
+                track_avy,
+                daily_forecast,
+                ..forecast_vars.clone()
+            },
             point: point.clone(),
             // only an avalanche tracker stores its zone's forecast
             avy: if track_avy { avy.clone() } else { None },
@@ -582,43 +563,66 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &datab
         // the forecast is the safety information, so it is sent even if the
         // tracker can't be saved. the save is retried once, then the user is told
         let name = tracker_name.as_deref().unwrap_or("without name");
-        if let Err(e) = database::add_tracker(&user_point, db).await
-        {
+        if let Err(e) = database::add_tracker(&user_point, db).await {
             eprintln!("get_requested_forecast: failed to save tracker {name}, retrying once: {e}");
-            if let Err(e) = database::add_tracker(&user_point, db).await
-            {
-                eprintln!("get_requested_forecast: retry failed, tracker {name} was not created: {e}");
+            if let Err(e) = database::add_tracker(&user_point, db).await {
+                eprintln!(
+                    "get_requested_forecast: retry failed, tracker {name} was not created: {e}"
+                );
                 tracker_notice = Some("Could not create tracker.");
             }
         }
     }
 
-    Ok(SmsForecastResponse { point, forecast, alerts: active_alerts, alerts_notice, alerts_stale_notice,
-        avy, avy_notice, avy_stale_notice, daily_notice, tracker_notice })
+    Ok(SmsForecastResponse {
+        point,
+        forecast,
+        alerts: active_alerts,
+        alerts_notice,
+        alerts_stale_notice,
+        avy,
+        avy_notice,
+        avy_stale_notice,
+        daily_notice,
+        tracker_notice,
+    })
 }
 
 // maps an NWS error the same way the route handlers do
-fn nws_error(call: &str, lat: f32, lon: f32, e: nws::NWSError, fallback: errors::APIError) -> errors::APIError
-{
-    if e.is_not_found()
-    {
+fn nws_error(
+    call: &str,
+    lat: f32,
+    lon: f32,
+    e: nws::NWSError,
+    fallback: errors::APIError,
+) -> errors::APIError {
+    if e.is_not_found() {
         return errors::APIError::LocationNotCovered;
     }
     eprintln!("get_requested_forecast: {call} failed for {lat},{lon}: {e}");
-    if e.is_timeout() { errors::APIError::UpstreamTimeout } else { fallback }
+    if e.is_timeout() {
+        errors::APIError::UpstreamTimeout
+    } else {
+        fallback
+    }
 }
 
 // checks if the point is in any avalanche forecast zone
 // returns the avy_properties for the area if danger_level >= 3
-async fn get_avy_no_tracker(point: &Point, avy_data: &AvalancheData, now: DateTime<Utc>) -> Option<AvyProperties>
-{
-    match nac::check_avy_geometry(point, avy_data, now).await
-    {
+async fn get_avy_no_tracker(
+    point: &Point,
+    avy_data: &AvalancheData,
+    now: DateTime<Utc>,
+) -> Option<AvyProperties> {
+    match nac::check_avy_geometry(point, avy_data, now).await {
         // NAC rates danger 1 (low) to 5 (extreme), 3 is considerable
-        nac::ZoneForecast::Current(zone) =>
-            Some(zone).filter(|properties| properties.danger_level.is_some_and(|level| level >= 3)).cloned(),
+        nac::ZoneForecast::Current(zone) => Some(zone)
+            .filter(|properties| properties.danger_level.is_some_and(|level| level >= 3))
+            .cloned(),
         // without track_avy, a zone without a valid forecast isn't reported
-        nac::ZoneForecast::NoZone | nac::ZoneForecast::OffSeason | nac::ZoneForecast::NoForecast
-            | nac::ZoneForecast::Expired => None,
+        nac::ZoneForecast::NoZone
+        | nac::ZoneForecast::OffSeason
+        | nac::ZoneForecast::NoForecast
+        | nac::ZoneForecast::Expired => None,
     }
 }

@@ -1,77 +1,66 @@
 // handler for National Avalanche Center api
 
-use reqwest::Client;
-use once_cell::sync::Lazy;
-use std::time::Duration;
-use serde_json;
-use thiserror::Error;
-use geo;
-use geo::Intersects;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
+use geo;
+use geo::Intersects;
+use once_cell::sync::Lazy;
+use reqwest::Client;
+use serde_json;
+use std::time::Duration;
+use thiserror::Error;
 
 // local modules
-use crate::models::{AvalancheData, AvyArea, AvyProperties, Point, 
-    DateTimeTypes, GeometryTypes, RawFeatures, UserPoint, InvalidAvyArea, SkippedFeatures, Snapshot};
 use crate::geometry;
+use crate::models::{
+    AvalancheData, AvyArea, AvyProperties, DateTimeTypes, GeometryTypes, InvalidAvyArea, Point,
+    RawFeatures, SkippedFeatures, Snapshot, UserPoint,
+};
 use crate::tracking;
 
 const BASE_URL: &str = "https://api.avalanche.org/v2/public/products/map-layer";
 
-static NAC_CLIENT: Lazy<Client> = Lazy::new(||                        
-{                                                                     
-    Client::builder()                                                 
+static NAC_CLIENT: Lazy<Client> = Lazy::new(|| {
+    Client::builder()
         // NWS requires contact info in the User-Agent, checked at startup in main
-        .user_agent(std::env::var("RIDGECAST_USER_AGENT").expect("RIDGECAST_USER_AGENT must be set"))
+        .user_agent(
+            std::env::var("RIDGECAST_USER_AGENT").expect("RIDGECAST_USER_AGENT must be set"),
+        )
         // fail fast if the host is unreachable
         .connect_timeout(Duration::from_secs(10))
         // cap the whole request, including reading the body
         .timeout(Duration::from_secs(30))
-        .build()                                                      
-        .expect("Failed to build client")                             
-});                                                                   
+        .build()
+        .expect("Failed to build client")
+});
 
 #[derive(Debug, Error)]
-pub enum NACError
-{
+pub enum NACError {
     #[error("could not retrieve data from NAC API: {0}")]
     APICallError(#[from] reqwest::Error),
     #[error("json parsing error: {0}")]
     JsonError(#[from] serde_json::Error),
 }
 
-impl NACError
-{
-    pub fn is_timeout(&self) -> bool
-    {
+impl NACError {
+    pub fn is_timeout(&self) -> bool {
         matches!(self, NACError::APICallError(e) if e.is_timeout())
     }
 
     // the response arrived but its body was not valid json
     // or not shaped like a feature collection
-    pub fn is_malformed(&self) -> bool
-    {
-        match self
-        {
+    pub fn is_malformed(&self) -> bool {
+        match self {
             NACError::APICallError(e) => e.is_decode(),
             NACError::JsonError(_) => true,
         }
     }
 }
 
-async fn fetch_avy() -> Result<RawFeatures, NACError>
-{
-    let avy_response =
-        NAC_CLIENT
-        .get(BASE_URL)
-        .send()
-        .await?
-        .error_for_status()?;
+async fn fetch_avy() -> Result<RawFeatures, NACError> {
+    let avy_response = NAC_CLIENT.get(BASE_URL).send().await?.error_for_status()?;
 
-    let avy_json: serde_json::Value =
-        avy_response
-        .json()
-        .await?;
+    let avy_json: serde_json::Value = avy_response.json().await?;
 
     //println!("{avy_json}");
 
@@ -80,13 +69,10 @@ async fn fetch_avy() -> Result<RawFeatures, NACError>
 
 // returns the avalanche zones, the zones whose geometry could not be converted,
 // and the features that couldn't be deserialized
-pub async fn get_avy() -> Result<(AvalancheData, Vec<InvalidAvyArea>, SkippedFeatures), NACError>
-{
+pub async fn get_avy() -> Result<(AvalancheData, Vec<InvalidAvyArea>, SkippedFeatures), NACError> {
     // retry once if the response is malformed
-    let raw = match fetch_avy().await
-    {
-        Err(e) if e.is_malformed() =>
-        {
+    let raw = match fetch_avy().await {
+        Err(e) if e.is_malformed() => {
             eprintln!("get_avy: malformed response, retrying once: {e}");
             fetch_avy().await?
         }
@@ -97,50 +83,56 @@ pub async fn get_avy() -> Result<(AvalancheData, Vec<InvalidAvyArea>, SkippedFea
     let (features, skipped) = raw.parse("NAC map layer");
     let (features, invalid_areas) = build_avy_map(features);
     // wrap the zones so the snapshot is stored as a single document
-    Ok((AvalancheData { features, fetched_at: chrono::Utc::now() }, invalid_areas, skipped))
+    Ok((
+        AvalancheData {
+            features,
+            fetched_at: chrono::Utc::now(),
+        },
+        invalid_areas,
+        skipped,
+    ))
 }
 
 // converts each zone's dates to local time and its geometry to geo_types,
 // so check_avy_geometry can test points against them
 // a zone whose geometry can't be converted keeps its Geojson geometry, which
 // check_avy_geometry never matches. it is logged and returned as an InvalidAvyArea
-pub fn build_avy_map(mut features: Vec<AvyArea>) -> (Vec<AvyArea>, Vec<InvalidAvyArea>)
-{
+pub fn build_avy_map(mut features: Vec<AvyArea>) -> (Vec<AvyArea>, Vec<InvalidAvyArea>) {
     let mut invalid_areas = Vec::new();
     let now = chrono::Utc::now();
 
-    for area in features.iter_mut()
-    {
+    for area in features.iter_mut() {
         // NAC dates have no offset but are in UTC,
         // so convert them to the zone's local timezone
-        if let Some(tz) = area.properties.timezone
+        if let Some(tz) = area
+            .properties
+            .timezone
             .as_deref()
             .and_then(|tz| tz.parse::<Tz>().ok())
         {
-            for date in [&mut area.properties.start_date, &mut area.properties.end_date]
-            {
-                if let Some(DateTimeTypes::Naive(naive)) = date
-                {
+            for date in [
+                &mut area.properties.start_date,
+                &mut area.properties.end_date,
+            ] {
+                if let Some(DateTimeTypes::Naive(naive)) = date {
                     let local = naive.and_utc().with_timezone(&tz).fixed_offset();
                     *date = Some(DateTimeTypes::Aware(local));
                 }
             }
         }
 
-        if let GeometryTypes::Geojson(geo) = &area.geometry
-        {
-            match geometry::convert_geometry(geo)
-            {
+        if let GeometryTypes::Geojson(geo) = &area.geometry {
+            match geometry::convert_geometry(geo) {
                 Ok(new_geo) => area.geometry = new_geo,
-                Err(error) =>
-                {
+                Err(error) => {
                     let zone_name = area.properties.name.clone();
                     let center = area.properties.center.clone();
-                    eprintln!("build_avy_map: zone {} ({}) can't be matched to a location, {error}",
+                    eprintln!(
+                        "build_avy_map: zone {} ({}) can't be matched to a location, {error}",
                         zone_name.as_deref().unwrap_or("without name"),
-                        center.as_deref().unwrap_or("unknown center"));
-                    invalid_areas.push(InvalidAvyArea
-                    {
+                        center.as_deref().unwrap_or("unknown center")
+                    );
+                    invalid_areas.push(InvalidAvyArea {
                         zone_name,
                         center,
                         reason: error.reason,
@@ -162,8 +154,7 @@ pub fn build_avy_map(mut features: Vec<AvyArea>) -> (Vec<AvyArea>, Vec<InvalidAv
 // Current borrows the forecast from the avalanche data, so it is only cloned
 // by callers that keep it
 #[derive(Debug, Clone, PartialEq)]
-pub enum ZoneForecast<'a>
-{
+pub enum ZoneForecast<'a> {
     // a valid forecast: it has a start_date and an end_date that hasn't passed.
     // a forecast that hasn't started yet is valid
     Current(&'a AvyProperties),
@@ -179,34 +170,37 @@ pub enum ZoneForecast<'a>
 
 // checks which avalanche forecast zone a point intersects with
 // and returns the state of its forecast
-pub async fn check_avy_geometry<'a>(point: &Point, avy_data: &'a AvalancheData, now: DateTime<Utc>)
-    -> ZoneForecast<'a>
-{
+pub async fn check_avy_geometry<'a>(
+    point: &Point,
+    avy_data: &'a AvalancheData,
+    now: DateTime<Utc>,
+) -> ZoneForecast<'a> {
     let coordinates = point.geometry.coordinates;
 
     // intersects, so a point on a zone boundary still matches
-    let zone = avy_data.features.iter().find(|area| match &area.geometry
-    {
+    let zone = avy_data.features.iter().find(|area| match &area.geometry {
         GeometryTypes::Polygon(value) => value.intersects(&coordinates),
         GeometryTypes::MultiPolygon(value) => value.intersects(&coordinates),
         GeometryTypes::Geojson(_) => false,
     });
-    let Some(area) = zone
-    else
-    {
+    let Some(area) = zone else {
         return ZoneForecast::NoZone;
     };
 
     // off season is checked first, since off season zones can keep an old start_date
-    if area.properties.off_season == Some(true)
-    {
+    if area.properties.off_season == Some(true) {
         return ZoneForecast::OffSeason;
     }
-    let start = area.properties.start_date.as_ref().map(DateTimeTypes::to_utc);
+    let start = area
+        .properties
+        .start_date
+        .as_ref()
+        .map(DateTimeTypes::to_utc);
     let end = area.properties.end_date.as_ref().map(DateTimeTypes::to_utc);
-    match tracking::validity(start, end, now)
-    {
-        tracking::Validity::Current | tracking::Validity::NotStarted => ZoneForecast::Current(&area.properties),
+    match tracking::validity(start, end, now) {
+        tracking::Validity::Current | tracking::Validity::NotStarted => {
+            ZoneForecast::Current(&area.properties)
+        }
         tracking::Validity::Expired => ZoneForecast::Expired,
         tracking::Validity::NoStart | tracking::Validity::NoEnd => ZoneForecast::NoForecast,
     }
@@ -214,8 +208,7 @@ pub async fn check_avy_geometry<'a>(point: &Point, avy_data: &'a AvalancheData, 
 
 // what check_avy_tracker found, for the scheduler to act on
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum AvyTrackerUpdate
-{
+pub enum AvyTrackerUpdate {
     // nothing to send or save
     Unchanged,
     // UserPoint.avy was replaced with a new forecast, send it and save the tracker
@@ -240,58 +233,49 @@ pub enum AvyTrackerUpdate
 // a stale snapshot counts as losing the forecast
 // unused until the scheduler calls it, remove the allow then
 #[allow(dead_code)]
-pub async fn check_avy_tracker(user_point: &mut UserPoint, snapshot: &Snapshot<AvalancheData>,
-    now: DateTime<Utc>) -> AvyTrackerUpdate
-{
-    if snapshot.stale
-    {
+pub async fn check_avy_tracker(
+    user_point: &mut UserPoint,
+    snapshot: &Snapshot<AvalancheData>,
+    now: DateTime<Utc>,
+) -> AvyTrackerUpdate {
+    if snapshot.stale {
         return record_avy_loss(user_point, AvyTrackerUpdate::DataStale);
     }
-    match check_avy_geometry(&user_point.point, &snapshot.data, now).await
-    {
-        ZoneForecast::Current(current) =>
-        {
+    match check_avy_geometry(&user_point.point, &snapshot.data, now).await {
+        ZoneForecast::Current(current) => {
             let was_lost = user_point.avy_lost.is_raised();
             user_point.avy_lost.clear();
             user_point.avy_off_season.clear();
             // any changed field counts as a new forecast, since avalanche
             // information is safety critical it is better to over report
-            if user_point.avy.as_ref() != Some(current)
-            {
+            if user_point.avy.as_ref() != Some(current) {
                 user_point.avy = Some(current.clone());
                 AvyTrackerUpdate::NewForecast
-            }
-            else if was_lost
-            {
+            } else if was_lost {
                 AvyTrackerUpdate::ForecastRestored
-            }
-            else
-            {
+            } else {
                 AvyTrackerUpdate::Unchanged
             }
         }
         // sent once, even after another kind of loss was notified, since the
         // center may not publish another forecast before the tracker ends
-        ZoneForecast::OffSeason =>
-        {
-            if user_point.avy.is_none() || !user_point.avy_off_season.raise()
-            {
+        ZoneForecast::OffSeason => {
+            if user_point.avy.is_none() || !user_point.avy_off_season.raise() {
                 return AvyTrackerUpdate::Unchanged;
             }
             user_point.avy_lost.raise();
             AvyTrackerUpdate::OffSeason
         }
-        ZoneForecast::NoZone | ZoneForecast::NoForecast | ZoneForecast::Expired =>
-            record_avy_loss(user_point, AvyTrackerUpdate::ForecastLost),
+        ZoneForecast::NoZone | ZoneForecast::NoForecast | ZoneForecast::Expired => {
+            record_avy_loss(user_point, AvyTrackerUpdate::ForecastLost)
+        }
     }
 }
 
 // the user is only told about a loss when they had a valid forecast,
 // and only once until it is valid again
-fn record_avy_loss(user_point: &mut UserPoint, loss: AvyTrackerUpdate) -> AvyTrackerUpdate
-{
-    if user_point.avy.is_none() || !user_point.avy_lost.raise()
-    {
+fn record_avy_loss(user_point: &mut UserPoint, loss: AvyTrackerUpdate) -> AvyTrackerUpdate {
+    if user_point.avy.is_none() || !user_point.avy_lost.raise() {
         return AvyTrackerUpdate::Unchanged;
     }
     loss

@@ -1,17 +1,15 @@
 // errors returned by the route handlers and the code they call, such as the
 // snapshot loaders and SMS requests. each variant maps to an HTTP status code
 
-use axum::
-{
+use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Error, Debug, Serialize, Deserialize)]
-pub enum APIError
-{
+pub enum APIError {
     #[error("received error from NWS endpoint")]
     NWSError,
     #[error("received error from NAC endpoint")]
@@ -30,12 +28,9 @@ pub enum APIError
     LocationNotCovered,
 }
 
-impl IntoResponse for APIError
-{
-    fn into_response(self) -> Response
-    {
-        let status = match self
-        {
+impl IntoResponse for APIError {
+    fn into_response(self) -> Response {
+        let status = match self {
             // upstream API failed or returned bad data
             APIError::NWSError
             | APIError::NACError

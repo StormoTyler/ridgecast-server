@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 
 // where now falls in a forecast or alert's valid period
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Validity
-{
+pub enum Validity {
     // now is at or after start and before end
     Current,
     // start is still in the future
@@ -21,20 +20,22 @@ pub enum Validity
 // so a forecast is expired from the moment its end_date is reached.
 // callers resolve their own fallbacks before calling, such as an alert using
 // expires when it has no ends
-pub fn validity(start: Option<DateTime<Utc>>, end: Option<DateTime<Utc>>, now: DateTime<Utc>) -> Validity
-{
-    let Some(start) = start else { return Validity::NoStart };
-    let Some(end) = end else { return Validity::NoEnd };
-    if now >= end
-    {
+pub fn validity(
+    start: Option<DateTime<Utc>>,
+    end: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Validity {
+    let Some(start) = start else {
+        return Validity::NoStart;
+    };
+    let Some(end) = end else {
+        return Validity::NoEnd;
+    };
+    if now >= end {
         Validity::Expired
-    }
-    else if now < start
-    {
+    } else if now < start {
         Validity::NotStarted
-    }
-    else
-    {
+    } else {
         Validity::Current
     }
 }
@@ -46,23 +47,19 @@ pub fn validity(start: Option<DateTime<Utc>>, end: Option<DateTime<Utc>>, now: D
 #[serde(transparent)]
 pub struct NoticeFlag(bool);
 
-impl NoticeFlag
-{
+impl NoticeFlag {
     // marks the condition as notified. returns true only when it wasn't already,
     // so the caller sends the notice exactly once
-    pub fn raise(&mut self) -> bool
-    {
+    pub fn raise(&mut self) -> bool {
         !std::mem::replace(&mut self.0, true)
     }
 
     // the condition has ended, so the notice is sent again if it returns
-    pub fn clear(&mut self)
-    {
+    pub fn clear(&mut self) {
         self.0 = false;
     }
 
-    pub fn is_raised(&self) -> bool
-    {
+    pub fn is_raised(&self) -> bool {
         self.0
     }
 }
