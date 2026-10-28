@@ -26,7 +26,7 @@ mod handlers;
 use crate::handlers::nws;
 mod database;
 use crate::database::DB;
-use crate::snapshots::Snapshot;
+use crate::models::Snapshot;
 mod models;
 mod sms;
 mod snapshots;
@@ -157,6 +157,7 @@ async fn new_forecast(State(db): State<DB>) -> Response
 
     let user_point = UserPoint
     {
+        id: None,
         user: "whatever".to_string(),
         tracker_name: None,
         // all options off: forecast only, no alert tracking

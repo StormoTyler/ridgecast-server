@@ -12,7 +12,8 @@ use serde::Serialize;
 use crate::{APIError, add_alert_tracker};
 use crate::daily_forecast;
 use crate::database::DB;
-use crate::snapshots::{self, Snapshot};
+use crate::snapshots;
+use crate::models::Snapshot;
 use crate::handlers::{nac, nws};
 use crate::handlers::nac::ZoneForecast;
 use crate::models::{Alert, AlertsSorted, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
@@ -569,6 +570,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         // one tracker covers every option, its forecast_vars record which are on
         let user_point = UserPoint
         {
+            id: None,
             user: user.to_string(),
             tracker_name: tracker_name.clone(),
             forecast_vars: ForecastVars { track_avy, daily_forecast, ..forecast_vars.clone() },

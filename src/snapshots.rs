@@ -12,20 +12,14 @@ use crate::APIError;
 use crate::database::DB;
 use crate::handlers::{nac, nws};
 use crate::models::{AlertsSorted, AvalancheData, InvalidAlert, InvalidAvyArea, SkippedFeatures,
-    SKIPPED_FEATURES_FAIL_PERCENT};
+    SKIPPED_FEATURES_FAIL_PERCENT, Snapshot};
 
 // NWS updates alerts continuously
 pub const ALERTS_MAX_AGE: TimeDelta = TimeDelta::minutes(15);
 // NAC issues forecasts about once a day, with occasional updates
 pub const AVY_MAX_AGE: TimeDelta = TimeDelta::hours(2);
 
-// a snapshot read for use, stale is True when it is older than its max age
-// because it could not be refreshed
-pub struct Snapshot<T>
-{
-    pub data: T,
-    pub stale: bool,
-}
+
 
 pub fn is_stale(fetched_at: DateTime<Utc>, max_age: TimeDelta, now: DateTime<Utc>) -> bool
 {

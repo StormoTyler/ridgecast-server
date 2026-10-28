@@ -74,10 +74,12 @@ async fn refresh_avy(db: DB)
 async fn check_trackers() 
 {
     // retrieve each UserPoint in point_collection
+    // load alerts snapshot 
+    // load avalanche snapshot
     // then call check_tracker on the point
 }
 
-fn check_tracker(user_point: UserPoint)
+async fn check_tracker(user_point: UserPoint, alerts: )
 {
     let point: Point = user_point.point
 

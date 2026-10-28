@@ -14,6 +14,10 @@ use crate::tracking::NoticeFlag;
 #[derive(Debug, Serialize, Deserialize, Clone)]           
 pub struct UserPoint       
 {                          
+   // the MongoDB _id, so a tracker can be saved back after it is checked.
+   // None until the tracker is inserted, then MongoDB assigns it
+   #[serde(rename = "_id", default, skip_serializing_if = "Option::is_none")]
+   pub id: Option<bson::oid::ObjectId>,
    pub user: String,          
    // name the user gave the tracker, shown in its messages. None for a
    // UserPoint that is not a tracker
@@ -612,4 +616,12 @@ impl DateTimeTypes
             DateTimeTypes::Naive(naive) => naive.and_utc(),
         }
     }
+}
+
+// a snapshot read for use, stale is True when it is older than its max age
+// because it could not be refreshed
+pub struct Snapshot<T>
+{
+    pub data: T,
+    pub stale: bool,
 }

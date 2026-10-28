@@ -2,7 +2,7 @@
 use chrono::{DateTime, TimeZone, Utc};
 
 use crate::handlers::nac::{self, AvyTrackerUpdate, ZoneForecast};
-use crate::snapshots::Snapshot;
+use crate::models::Snapshot;
 use crate::models::{AvalancheData, AvyArea, AvyProperties, DateTimeTypes, ForecastVars,
     InvalidAvyArea, GeometryErrorReason,
     GeometryTypes, NWR, Point, PointGeometry, PointProperties, RawFeatures, UserPoint};
@@ -71,6 +71,7 @@ fn make_tracker(avy: Option<AvyProperties>) -> UserPoint
 {
     UserPoint
     {
+        id: None,
         user: "test".to_string(),
         tracker_name: Some("test".to_string()),
         forecast_vars: ForecastVars { track_avy: true, ..ForecastVars::default() },
