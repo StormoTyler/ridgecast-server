@@ -38,7 +38,7 @@ use crate::models::{UserPoint, Point, ForecastVars, ForecastProperties, PointGeo
     NWR, Alerts, Alert, GeometryTypes, AlertData,
     Geocode, AlertsSorted, Forecast, Properties,
     Elevation, IntVec, TimeInt, FloatVec, TimeFloat, ForecastResponse,
-    NWSError, AvalancheData, AvyArea, AvyProperties};
+    AvalancheData, AvyArea, AvyProperties};
 
 #[tokio::main]                                                                
 async fn main() -> Result<(), Box<dyn std::error::Error>>                     

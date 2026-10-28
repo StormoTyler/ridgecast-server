@@ -1,4 +1,3 @@
-use thiserror::Error;
 use geojson;
 use geo;
 use geo_types;
@@ -370,50 +369,6 @@ pub struct ForecastResponse
     pub alerts: Vec<Alert>,                                      
 }                                                            
                                                              
-#[derive(Debug, Error)]                                      
-pub enum NWSError                                            
-{                                                            
-    #[error("could not retrieve data from NWS API: {0}")]
-    APICallError(#[from] reqwest::Error),
-    #[error("json parsing failed: {0}")]
-    JsonError(#[from] serde_json::Error),
-}
-
-impl NWSError
-{
-    pub fn is_timeout(&self) -> bool
-    {
-        matches!(self, NWSError::APICallError(e) if e.is_timeout())
-    }
-
-    // NWS returns 404 for points outside its coverage area
-    pub fn is_not_found(&self) -> bool
-    {
-        matches!(self, NWSError::APICallError(e)
-            if e.status() == Some(reqwest::StatusCode::NOT_FOUND))
-    }
-
-    // the response arrived but its body was not valid json
-    // or not shaped like the expected data
-    pub fn is_malformed(&self) -> bool
-    {
-        match self
-        {
-            NWSError::APICallError(e) => e.is_decode(),
-            NWSError::JsonError(_) => true,
-        }
-    }
-
-    // a failure that may not happen again: a 5xx response, a timeout,
-    // a connection failure, or a malformed body. a 404 is not transient
-    pub fn is_transient(&self) -> bool
-    {
-        self.is_malformed() || matches!(self, NWSError::APICallError(e)
-            if e.status().is_some_and(|status| status.is_server_error())
-                || e.is_timeout()
-                || e.is_connect())
-    }
-}
 // end nws data models
 
 // data structures for NAC data

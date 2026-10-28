@@ -16,7 +16,7 @@ use crate::snapshots;
 use crate::models::Snapshot;
 use crate::handlers::{nac, nws};
 use crate::models::{Alert, AlertsSorted, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
-    ForecastResponse, ForecastVars, IntVec, NWSError, Point, Properties,
+    ForecastResponse, ForecastVars, IntVec, Point, Properties,
     UserPoint};
 
 const SUPPORTED_VERSION: &str = "1";
@@ -601,7 +601,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &datab
 }
 
 // maps an NWS error the same way the route handlers do
-fn nws_error(call: &str, lat: f32, lon: f32, e: NWSError, fallback: errors::APIError) -> errors::APIError
+fn nws_error(call: &str, lat: f32, lon: f32, e: nws::NWSError, fallback: errors::APIError) -> errors::APIError
 {
     if e.is_not_found()
     {
