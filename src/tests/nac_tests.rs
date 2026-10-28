@@ -1,11 +1,10 @@
 // tests for nac::check_avy_geometry and nac::check_avy_tracker against a saved NAC map-layer response
 use chrono::{DateTime, TimeZone, Utc};
 
-use crate::handlers::nac::{self, AvyTrackerUpdate, ZoneForecast};
-use crate::models::Snapshot;
+use crate::handlers::nac;
 use crate::models::{AvalancheData, AvyArea, AvyProperties, DateTimeTypes, ForecastVars,
     InvalidAvyArea, GeometryErrorReason,
-    GeometryTypes, NWR, Point, PointGeometry, PointProperties, RawFeatures, UserPoint};
+    GeometryTypes, NWR, Point, PointGeometry, PointProperties, RawFeatures, Snapshot, UserPoint};
 
 const TEST_DATA: &str = include_str!("test_data/nac_test_data.json");
 
@@ -96,21 +95,21 @@ async fn matched_name(avy: &AvalancheData, lat: f64, lon: f64) -> Option<String>
 {
     match nac::check_avy_geometry(&make_point(lat, lon), avy, test_now()).await
     {
-        ZoneForecast::Current(properties) => properties.name,
-        ZoneForecast::NoZone => None,
+        nac::ZoneForecast::Current(properties) => properties.name,
+        nac::ZoneForecast::NoZone => None,
         other => panic!("geometry test zones should have a current forecast, got {other:?}"),
     }
 }
 
 // runs check_avy_tracker on fresh avalanche data
-async fn check_tracker(tracker: &mut UserPoint, avy: &AvalancheData, now: DateTime<Utc>) -> AvyTrackerUpdate
+async fn check_tracker(tracker: &mut UserPoint, avy: &AvalancheData, now: DateTime<Utc>) -> nac::AvyTrackerUpdate
 {
     nac::check_avy_tracker(tracker, &Snapshot { data: avy.clone(), stale: false }, now).await
 }
 
 // runs check_avy_tracker on stale avalanche data
 async fn check_tracker_stale(tracker: &mut UserPoint, avy: &AvalancheData, now: DateTime<Utc>)
-    -> AvyTrackerUpdate
+    -> nac::AvyTrackerUpdate
 {
     nac::check_avy_tracker(tracker, &Snapshot { data: avy.clone(), stale: true }, now).await
 }
@@ -129,7 +128,7 @@ fn test_zones_have_expected_geometry()
 async fn test_point_inside_polygon_zone()
 {
     let avy = load_avy();
-    let ZoneForecast::Current(properties) =
+    let nac::ZoneForecast::Current(properties) =
         nac::check_avy_geometry(&make_point(48.08, -113.86), &avy, test_now()).await
     else
     {
@@ -205,7 +204,7 @@ async fn test_point_in_zone_without_forecast()
     // Central Cascades is in season but has no start_date
     let avy = load_avy();
     let result = nac::check_avy_geometry(&make_point(44.19, -121.75), &avy, test_now()).await;
-    assert_eq!(result, ZoneForecast::NoForecast);
+    assert_eq!(result, nac::ZoneForecast::NoForecast);
 }
 
 #[tokio::test]
@@ -215,7 +214,7 @@ async fn test_point_in_off_season_zone()
     // off season takes priority
     let avy = load_avy();
     let result = nac::check_avy_geometry(&make_point(61.13, -149.53), &avy, test_now()).await;
-    assert_eq!(result, ZoneForecast::OffSeason);
+    assert_eq!(result, nac::ZoneForecast::OffSeason);
 }
 
 #[tokio::test]
@@ -225,7 +224,7 @@ async fn test_avy_tracker_with_same_forecast()
     let avy = load_avy();
     let mut tracker = make_tracker(Some(current_forecast(&avy)));
 
-    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::Unchanged);
+    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::Unchanged);
     assert_eq!(tracker.avy, Some(current_forecast(&avy)));
 }
 
@@ -239,7 +238,7 @@ async fn test_avy_tracker_with_changed_field()
     stored.travel_advice = Some("stored advice".to_string());
     let mut tracker = make_tracker(Some(stored));
 
-    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::NewForecast);
+    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::NewForecast);
     let stored = tracker.avy.expect("forecast should be stored");
     assert_eq!(stored.start_date, current.start_date);
     assert_eq!(stored.travel_advice, current.travel_advice);
@@ -261,7 +260,7 @@ async fn test_avy_tracker_with_earlier_start_date()
     stored.travel_advice = Some("stored advice".to_string());
     let mut tracker = make_tracker(Some(stored));
 
-    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::NewForecast);
+    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::NewForecast);
     // the whole forecast is replaced, not just its start_date
     assert_eq!(tracker.avy, Some(current));
 }
@@ -274,7 +273,7 @@ async fn test_avy_tracker_with_no_stored_forecast()
     let avy = load_avy();
     let mut tracker = make_tracker(None);
 
-    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::NewForecast);
+    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::NewForecast);
     assert_eq!(tracker.avy, Some(current_forecast(&avy)));
 }
 
@@ -286,7 +285,7 @@ async fn test_avy_tracker_in_off_season_zone()
     let mut tracker = make_tracker(None);
     tracker.point = make_point(61.13, -149.53);
 
-    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::Unchanged);
+    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::Unchanged);
     assert!(tracker.avy.is_none());
     // there was no forecast to lose, so no loss is recorded
     assert!(!tracker.avy_lost.is_raised());
@@ -311,7 +310,7 @@ async fn test_forecast_past_end_date_is_expired()
 {
     let avy = load_avy();
     let result = nac::check_avy_geometry(&make_point(43.74, -110.80), &avy, after_tetons_end()).await;
-    assert_eq!(result, ZoneForecast::Expired);
+    assert_eq!(result, nac::ZoneForecast::Expired);
 }
 
 #[tokio::test]
@@ -320,7 +319,7 @@ async fn test_forecast_not_started_is_valid()
     // before the Tetons forecast starts at 2026-10-02 22:49 UTC
     let avy = load_avy();
     let before_start = Utc.with_ymd_and_hms(2026, 10, 2, 0, 0, 0).unwrap();
-    let ZoneForecast::Current(properties) =
+    let nac::ZoneForecast::Current(properties) =
         nac::check_avy_geometry(&make_point(43.74, -110.80), &avy, before_start).await
     else
     {
@@ -335,7 +334,7 @@ async fn test_forecast_without_end_date_is_invalid()
     let mut avy = load_avy();
     find_zone_mut(&mut avy, FORECAST_ZONE).properties.end_date = None;
     let result = nac::check_avy_geometry(&make_point(43.74, -110.80), &avy, test_now()).await;
-    assert_eq!(result, ZoneForecast::NoForecast);
+    assert_eq!(result, nac::ZoneForecast::NoForecast);
 }
 
 #[tokio::test]
@@ -345,13 +344,13 @@ async fn test_avy_tracker_notifies_expired_forecast_once()
     let mut tracker = tracker_with_current_forecast(&avy);
 
     assert_eq!(check_tracker(&mut tracker, &avy, after_tetons_end()).await,
-        AvyTrackerUpdate::ForecastLost);
+        nac::AvyTrackerUpdate::ForecastLost);
     assert!(tracker.avy_lost.is_raised());
     // the last forecast sent is kept, so it isn't resent if it becomes valid again
     assert_eq!(tracker.avy, Some(current_forecast(&avy)));
     // later checks with no valid forecast send nothing
     assert_eq!(check_tracker(&mut tracker, &avy, after_tetons_end()).await,
-        AvyTrackerUpdate::Unchanged);
+        nac::AvyTrackerUpdate::Unchanged);
 }
 
 #[tokio::test]
@@ -363,7 +362,7 @@ async fn test_avy_tracker_notifies_lost_forecast()
     find_zone_mut(&mut avy, FORECAST_ZONE).properties.start_date = None;
 
     assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await,
-        AvyTrackerUpdate::ForecastLost);
+        nac::AvyTrackerUpdate::ForecastLost);
 }
 
 #[tokio::test]
@@ -375,7 +374,7 @@ async fn test_avy_tracker_notifies_lost_zone()
     avy.features.retain(|area| area.properties.name.as_deref() != Some(FORECAST_ZONE));
 
     assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await,
-        AvyTrackerUpdate::ForecastLost);
+        nac::AvyTrackerUpdate::ForecastLost);
 }
 
 #[tokio::test]
@@ -387,10 +386,10 @@ async fn test_avy_tracker_notifies_off_season_loss()
     find_zone_mut(&mut avy, FORECAST_ZONE).properties.off_season = Some(true);
 
     assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await,
-        AvyTrackerUpdate::OffSeason);
+        nac::AvyTrackerUpdate::OffSeason);
     assert!(tracker.avy_lost.is_raised());
     assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await,
-        AvyTrackerUpdate::Unchanged);
+        nac::AvyTrackerUpdate::Unchanged);
 }
 
 #[tokio::test]
@@ -403,15 +402,15 @@ async fn test_avy_tracker_restores_same_forecast_silently()
     let mut tracker = tracker_with_current_forecast(&avy);
 
     assert_eq!(check_tracker(&mut tracker, &missing, test_now()).await,
-        AvyTrackerUpdate::ForecastLost);
+        nac::AvyTrackerUpdate::ForecastLost);
     // the user already has this forecast, so it isn't sent again
     assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await,
-        AvyTrackerUpdate::ForecastRestored);
+        nac::AvyTrackerUpdate::ForecastRestored);
     assert!(!tracker.avy_lost.is_raised());
     assert_eq!(tracker.avy, Some(current_forecast(&avy)));
     // once restored, a new loss is notified again
     assert_eq!(check_tracker(&mut tracker, &missing, test_now()).await,
-        AvyTrackerUpdate::ForecastLost);
+        nac::AvyTrackerUpdate::ForecastLost);
 }
 
 #[tokio::test]
@@ -423,9 +422,9 @@ async fn test_avy_tracker_sends_changed_forecast_after_loss()
     let mut tracker = tracker_with_current_forecast(&avy);
 
     assert_eq!(check_tracker(&mut tracker, &avy, after_tetons_end()).await,
-        AvyTrackerUpdate::ForecastLost);
+        nac::AvyTrackerUpdate::ForecastLost);
     assert_eq!(check_tracker(&mut tracker, &changed, test_now()).await,
-        AvyTrackerUpdate::NewForecast);
+        nac::AvyTrackerUpdate::NewForecast);
     assert!(!tracker.avy_lost.is_raised());
     assert_eq!(tracker.avy.and_then(|properties| properties.travel_advice).as_deref(), Some("new advice"));
 }
@@ -438,7 +437,7 @@ async fn test_avy_tracker_without_forecast_sends_nothing_on_loss()
     let mut tracker = make_tracker(None);
 
     assert_eq!(check_tracker(&mut tracker, &avy, after_tetons_end()).await,
-        AvyTrackerUpdate::Unchanged);
+        nac::AvyTrackerUpdate::Unchanged);
     assert!(!tracker.avy_lost.is_raised());
 }
 
@@ -449,11 +448,11 @@ async fn test_avy_tracker_stale_data_is_a_loss()
     let avy = load_avy();
     let mut tracker = tracker_with_current_forecast(&avy);
 
-    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::DataStale);
+    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::DataStale);
     assert!(tracker.avy_lost.is_raised());
     assert_eq!(tracker.avy, Some(current_forecast(&avy)));
     // the loss is sent once, while the data stays stale
-    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::Unchanged);
+    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::Unchanged);
 }
 
 #[tokio::test]
@@ -463,8 +462,8 @@ async fn test_avy_tracker_restores_same_forecast_after_stale_data()
     let avy = load_avy();
     let mut tracker = tracker_with_current_forecast(&avy);
 
-    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::DataStale);
-    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::ForecastRestored);
+    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::DataStale);
+    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::ForecastRestored);
     assert!(!tracker.avy_lost.is_raised());
 }
 
@@ -474,7 +473,7 @@ async fn test_avy_tracker_without_forecast_sends_nothing_on_stale_data()
     let avy = load_avy();
     let mut tracker = make_tracker(None);
 
-    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::Unchanged);
+    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::Unchanged);
     assert!(tracker.avy.is_none());
 }
 
@@ -487,12 +486,12 @@ async fn test_avy_tracker_sends_off_season_after_stale_loss()
     find_zone_mut(&mut off_season, FORECAST_ZONE).properties.off_season = Some(true);
     let mut tracker = tracker_with_current_forecast(&avy);
 
-    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::DataStale);
-    assert_eq!(check_tracker(&mut tracker, &off_season, test_now()).await, AvyTrackerUpdate::OffSeason);
+    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::DataStale);
+    assert_eq!(check_tracker(&mut tracker, &off_season, test_now()).await, nac::AvyTrackerUpdate::OffSeason);
     assert!(tracker.avy_lost.is_raised());
     // sent once, including when the data goes stale again
-    assert_eq!(check_tracker(&mut tracker, &off_season, test_now()).await, AvyTrackerUpdate::Unchanged);
-    assert_eq!(check_tracker_stale(&mut tracker, &off_season, test_now()).await, AvyTrackerUpdate::Unchanged);
+    assert_eq!(check_tracker(&mut tracker, &off_season, test_now()).await, nac::AvyTrackerUpdate::Unchanged);
+    assert_eq!(check_tracker_stale(&mut tracker, &off_season, test_now()).await, nac::AvyTrackerUpdate::Unchanged);
 }
 
 #[tokio::test]
@@ -502,8 +501,8 @@ async fn test_avy_tracker_sends_nothing_for_other_losses_after_stale_loss()
     let avy = load_avy();
     let mut tracker = tracker_with_current_forecast(&avy);
 
-    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::DataStale);
-    assert_eq!(check_tracker(&mut tracker, &avy, after_tetons_end()).await, AvyTrackerUpdate::Unchanged);
+    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::DataStale);
+    assert_eq!(check_tracker(&mut tracker, &avy, after_tetons_end()).await, nac::AvyTrackerUpdate::Unchanged);
 }
 
 #[tokio::test]
@@ -515,9 +514,9 @@ async fn test_avy_tracker_sends_off_season_after_other_losses()
     find_zone_mut(&mut off_season, FORECAST_ZONE).properties.off_season = Some(true);
     let mut tracker = tracker_with_current_forecast(&avy);
 
-    assert_eq!(check_tracker(&mut tracker, &avy, after_tetons_end()).await, AvyTrackerUpdate::ForecastLost);
-    assert_eq!(check_tracker(&mut tracker, &off_season, after_tetons_end()).await, AvyTrackerUpdate::OffSeason);
-    assert_eq!(check_tracker(&mut tracker, &off_season, after_tetons_end()).await, AvyTrackerUpdate::Unchanged);
+    assert_eq!(check_tracker(&mut tracker, &avy, after_tetons_end()).await, nac::AvyTrackerUpdate::ForecastLost);
+    assert_eq!(check_tracker(&mut tracker, &off_season, after_tetons_end()).await, nac::AvyTrackerUpdate::OffSeason);
+    assert_eq!(check_tracker(&mut tracker, &off_season, after_tetons_end()).await, nac::AvyTrackerUpdate::Unchanged);
 }
 
 #[tokio::test]
@@ -529,9 +528,9 @@ async fn test_avy_tracker_sends_nothing_for_other_losses_after_off_season()
     find_zone_mut(&mut off_season, FORECAST_ZONE).properties.off_season = Some(true);
     let mut tracker = tracker_with_current_forecast(&avy);
 
-    assert_eq!(check_tracker(&mut tracker, &off_season, test_now()).await, AvyTrackerUpdate::OffSeason);
-    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::Unchanged);
-    assert_eq!(check_tracker(&mut tracker, &avy, after_tetons_end()).await, AvyTrackerUpdate::Unchanged);
+    assert_eq!(check_tracker(&mut tracker, &off_season, test_now()).await, nac::AvyTrackerUpdate::OffSeason);
+    assert_eq!(check_tracker_stale(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::Unchanged);
+    assert_eq!(check_tracker(&mut tracker, &avy, after_tetons_end()).await, nac::AvyTrackerUpdate::Unchanged);
 }
 
 #[tokio::test]
@@ -543,9 +542,9 @@ async fn test_avy_tracker_sends_off_season_again_after_valid_forecast()
     find_zone_mut(&mut off_season, FORECAST_ZONE).properties.off_season = Some(true);
     let mut tracker = tracker_with_current_forecast(&avy);
 
-    assert_eq!(check_tracker(&mut tracker, &off_season, test_now()).await, AvyTrackerUpdate::OffSeason);
-    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, AvyTrackerUpdate::ForecastRestored);
-    assert_eq!(check_tracker(&mut tracker, &off_season, test_now()).await, AvyTrackerUpdate::OffSeason);
+    assert_eq!(check_tracker(&mut tracker, &off_season, test_now()).await, nac::AvyTrackerUpdate::OffSeason);
+    assert_eq!(check_tracker(&mut tracker, &avy, test_now()).await, nac::AvyTrackerUpdate::ForecastRestored);
+    assert_eq!(check_tracker(&mut tracker, &off_season, test_now()).await, nac::AvyTrackerUpdate::OffSeason);
 }
 
 #[test]

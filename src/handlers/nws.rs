@@ -17,7 +17,7 @@ use crate::models::{Point, PointGeometry, PointProperties,
     Forecast, Properties, Elevation, IntVec, TimeInt,
     FloatVec, TimeFloat, ForecastResponse, RawFeatures,
     InvalidAlert, InvalidAlertReason, SkippedFeatures};
-use crate::geometry::convert_geometry;
+use crate::geometry;
 
 const BASE_URL: &str = "https://api.weather.gov";
 
@@ -169,7 +169,7 @@ pub fn parse_alerts(raw: RawFeatures) -> (Alerts, Vec<InvalidAlert>, SkippedFeat
         let mut geometry_error_reason = None;
         if let Some(GeometryTypes::Geojson(geo)) = &alert.geometry
         {
-            match convert_geometry(geo)
+            match geometry::convert_geometry(geo)
             {
                 Ok(new_geo) => alert.geometry = Some(new_geo),
                 Err(error) =>
@@ -217,7 +217,7 @@ pub fn sort_alerts(mut alerts: Alerts) -> AlertsSorted
             // parse_alerts already converts geojson, this handles alerts that skipped it
             Some(GeometryTypes::Geojson(geo)) =>
             {
-                match convert_geometry(geo)
+                match geometry::convert_geometry(geo)
                 {
                     Ok(new_geo) =>
                     {

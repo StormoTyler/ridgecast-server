@@ -2,7 +2,7 @@
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 
-use crate::daily_forecast::{next_daily_forecast, point_time_zone};
+use crate::daily_forecast;
 use crate::models::{NWR, Point, PointGeometry, PointProperties};
 
 const LOS_ANGELES: Tz = chrono_tz::America::Los_Angeles;
@@ -16,7 +16,7 @@ fn utc(time: &str) -> DateTime<Utc>
 fn next(tz: Tz, after: &str) -> Option<DateTime<Utc>>
 {
     let after = utc(after);
-    next_daily_forecast(tz, after, after + Duration::hours(168))
+    daily_forecast::next_daily_forecast(tz, after, after + Duration::hours(168))
 }
 
 fn point_with_time_zone(time_zone: Option<&str>) -> Point
@@ -95,7 +95,7 @@ fn none_when_tracker_expires_first()
 {
     // 8:00 PM PDT with 9 hours left, expiring at 5:00 AM
     let after = utc("2026-10-07T03:00:00Z");
-    assert_eq!(next_daily_forecast(LOS_ANGELES, after, after + Duration::hours(9)), None);
+    assert_eq!(daily_forecast::next_daily_forecast(LOS_ANGELES, after, after + Duration::hours(9)), None);
 }
 
 #[test]
@@ -103,16 +103,16 @@ fn included_when_tracker_expires_exactly_at_6am()
 {
     // 8:00 PM PDT with 10 hours left, expiring at 6:00 AM
     let after = utc("2026-10-07T03:00:00Z");
-    assert_eq!(next_daily_forecast(LOS_ANGELES, after, after + Duration::hours(10)),
+    assert_eq!(daily_forecast::next_daily_forecast(LOS_ANGELES, after, after + Duration::hours(10)),
         Some(utc("2026-10-07T13:00:00Z")));
 }
 
 #[test]
 fn reads_point_time_zone()
 {
-    assert_eq!(point_time_zone(&point_with_time_zone(Some("America/Los_Angeles"))),
+    assert_eq!(daily_forecast::point_time_zone(&point_with_time_zone(Some("America/Los_Angeles"))),
         Some(LOS_ANGELES));
-    assert_eq!(point_time_zone(&point_with_time_zone(Some("Not/AZone"))), None);
-    assert_eq!(point_time_zone(&point_with_time_zone(Some(""))), None);
-    assert_eq!(point_time_zone(&point_with_time_zone(None)), None);
+    assert_eq!(daily_forecast::point_time_zone(&point_with_time_zone(Some("Not/AZone"))), None);
+    assert_eq!(daily_forecast::point_time_zone(&point_with_time_zone(Some(""))), None);
+    assert_eq!(daily_forecast::point_time_zone(&point_with_time_zone(None)), None);
 }

@@ -9,7 +9,7 @@ use serde::Serialize;
 
 // local modules
 use crate::errors;
-use crate::database::DB;
+use crate::database;
 use crate::handlers::{nac, nws};
 use crate::models::{AlertsSorted, AvalancheData, InvalidAlert, InvalidAvyArea, SkippedFeatures,
     SKIPPED_FEATURES_FAIL_PERCENT, Snapshot};
@@ -27,7 +27,7 @@ pub fn is_stale(fetched_at: DateTime<Utc>, max_age: TimeDelta, now: DateTime<Utc
 }
 
 // fetches the active alerts from NWS and replaces the stored snapshot
-pub async fn refresh_alerts(db: &DB) -> Result<AlertsSorted, errors::APIError>
+pub async fn refresh_alerts(db: &database::DB) -> Result<AlertsSorted, errors::APIError>
 {
     let alerts = fetch_alerts(db).await?;
     store_alerts(db, &alerts).await?;
@@ -35,7 +35,7 @@ pub async fn refresh_alerts(db: &DB) -> Result<AlertsSorted, errors::APIError>
 }
 
 // fetches the avalanche zones from NAC and replaces the stored snapshot
-pub async fn refresh_avy(db: &DB) -> Result<AvalancheData, errors::APIError>
+pub async fn refresh_avy(db: &database::DB) -> Result<AvalancheData, errors::APIError>
 {
     let avy = fetch_avy(db).await?;
     store_avy(db, &avy).await?;
@@ -44,7 +44,7 @@ pub async fn refresh_avy(db: &DB) -> Result<AvalancheData, errors::APIError>
 
 // reads the stored alerts, refreshing them first if they are missing, unreadable, or stale
 // errors only when NWS can't be reached and there is no stored snapshot to fall back on
-pub async fn load_alerts(db: &DB) -> Result<Snapshot<AlertsSorted>, errors::APIError>
+pub async fn load_alerts(db: &database::DB) -> Result<Snapshot<AlertsSorted>, errors::APIError>
 {
     if let Some(alerts) = read_alerts(db).await
         .filter(|alerts| !is_stale(alerts.fetched_at, ALERTS_MAX_AGE, Utc::now()))
@@ -83,7 +83,7 @@ pub async fn load_alerts(db: &DB) -> Result<Snapshot<AlertsSorted>, errors::APIE
 // reads the stored avalanche zones, refreshing them first if they are missing,
 // unreadable, or stale. errors only when NAC can't be reached and there is no
 // stored snapshot to fall back on
-pub async fn load_avy(db: &DB) -> Result<Snapshot<AvalancheData>, errors::APIError>
+pub async fn load_avy(db: &database::DB) -> Result<Snapshot<AvalancheData>, errors::APIError>
 {
     if let Some(avy) = read_avy(db).await
         .filter(|avy| !is_stale(avy.fetched_at, AVY_MAX_AGE, Utc::now()))
@@ -123,7 +123,7 @@ pub async fn load_avy(db: &DB) -> Result<Snapshot<AvalancheData>, errors::APIErr
 // couldn't be deserialized. fails if too many couldn't be deserialized, so
 // the loader falls back to the last good snapshot instead of storing a
 // snapshot that is missing alerts
-async fn fetch_alerts(db: &DB) -> Result<AlertsSorted, errors::APIError>
+async fn fetch_alerts(db: &database::DB) -> Result<AlertsSorted, errors::APIError>
 {
     let (alerts, invalid_alerts, skipped) = nws::get_alerts().await.map_err(|e|
     {
@@ -154,7 +154,7 @@ async fn fetch_alerts(db: &DB) -> Result<AlertsSorted, errors::APIError>
 
 // an alert with an id is upserted, so an alert that fails validation on every
 // refresh keeps one record
-async fn store_invalid_alert(db: &DB, invalid_alert: &InvalidAlert) -> mongodb::error::Result<()>
+async fn store_invalid_alert(db: &database::DB, invalid_alert: &InvalidAlert) -> mongodb::error::Result<()>
 {
     let Some(alert_id) = &invalid_alert.alert_id
     else
@@ -167,7 +167,7 @@ async fn store_invalid_alert(db: &DB, invalid_alert: &InvalidAlert) -> mongodb::
 
 // a zone with a name is upserted by its name and center, so a zone that fails
 // on every refresh keeps one record
-async fn store_invalid_avy_area(db: &DB, invalid_area: &InvalidAvyArea) -> mongodb::error::Result<()>
+async fn store_invalid_avy_area(db: &database::DB, invalid_area: &InvalidAvyArea) -> mongodb::error::Result<()>
 {
     let Some(zone_name) = &invalid_area.zone_name
     else
@@ -183,7 +183,7 @@ async fn store_invalid_avy_area(db: &DB, invalid_area: &InvalidAvyArea) -> mongo
 // debugging, so a failure to store them is logged and doesn't fail the fetch.
 // a feature with an id is upserted by its source and id, so a feature that
 // fails on every refresh keeps one record
-async fn store_skipped_features(db: &DB, skipped: &SkippedFeatures)
+async fn store_skipped_features(db: &database::DB, skipped: &SkippedFeatures)
 {
     for feature in skipped.features.iter()
     {
@@ -223,7 +223,7 @@ where
 // fetches the avalanche zones from NAC and stores any whose geometry could not
 // be converted or that couldn't be deserialized. fails if too many couldn't be
 // deserialized, for the same reason as fetch_alerts
-async fn fetch_avy(db: &DB) -> Result<AvalancheData, errors::APIError>
+async fn fetch_avy(db: &database::DB) -> Result<AvalancheData, errors::APIError>
 {
     let (avy, invalid_areas, skipped) = nac::get_avy().await.map_err(|e|
     {
@@ -254,7 +254,7 @@ async fn fetch_avy(db: &DB) -> Result<AvalancheData, errors::APIError>
 
 // swaps the stored snapshot in one operation, so a failed write
 // never leaves the collection empty
-async fn store_alerts(db: &DB, alerts: &AlertsSorted) -> Result<(), errors::APIError>
+async fn store_alerts(db: &database::DB, alerts: &AlertsSorted) -> Result<(), errors::APIError>
 {
     db.alerts_collection
         .replace_one(doc! {}, alerts)
@@ -268,7 +268,7 @@ async fn store_alerts(db: &DB, alerts: &AlertsSorted) -> Result<(), errors::APIE
         })
 }
 
-async fn store_avy(db: &DB, avy: &AvalancheData) -> Result<(), errors::APIError>
+async fn store_avy(db: &database::DB, avy: &AvalancheData) -> Result<(), errors::APIError>
 {
     db.avy_collection
         .replace_one(doc! {}, avy)
@@ -284,7 +284,7 @@ async fn store_avy(db: &DB, avy: &AvalancheData) -> Result<(), errors::APIError>
 
 // a read error is logged and handled like a missing snapshot, so the
 // snapshot is refreshed. this also replaces a document in an outdated shape
-async fn read_alerts(db: &DB) -> Option<AlertsSorted>
+async fn read_alerts(db: &database::DB) -> Option<AlertsSorted>
 {
     db.alerts_collection.find_one(doc! {}).await.unwrap_or_else(|e|
     {
@@ -293,7 +293,7 @@ async fn read_alerts(db: &DB) -> Option<AlertsSorted>
     })
 }
 
-async fn read_avy(db: &DB) -> Option<AvalancheData>
+async fn read_avy(db: &database::DB) -> Option<AvalancheData>
 {
     db.avy_collection.find_one(doc! {}).await.unwrap_or_else(|e|
     {

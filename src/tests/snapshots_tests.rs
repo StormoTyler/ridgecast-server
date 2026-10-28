@@ -2,14 +2,14 @@
 use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::models::{AlertsSorted, AvalancheData, RawFeatures, SkippedFeature, SkippedFeatures};
-use crate::snapshots::{self, ALERTS_MAX_AGE, AVY_MAX_AGE};
+use crate::snapshots;
 
 #[test]
 fn test_snapshot_within_max_age_is_fresh()
 {
     let now = Utc::now();
-    assert!(!snapshots::is_stale(now - TimeDelta::minutes(14), ALERTS_MAX_AGE, now));
-    assert!(!snapshots::is_stale(now - TimeDelta::minutes(119), AVY_MAX_AGE, now));
+    assert!(!snapshots::is_stale(now - TimeDelta::minutes(14), snapshots::ALERTS_MAX_AGE, now));
+    assert!(!snapshots::is_stale(now - TimeDelta::minutes(119), snapshots::AVY_MAX_AGE, now));
 }
 
 #[test]
@@ -17,15 +17,15 @@ fn test_snapshot_at_max_age_is_fresh()
 {
     // stale only once it is older than the max age
     let now = Utc::now();
-    assert!(!snapshots::is_stale(now - ALERTS_MAX_AGE, ALERTS_MAX_AGE, now));
+    assert!(!snapshots::is_stale(now - snapshots::ALERTS_MAX_AGE, snapshots::ALERTS_MAX_AGE, now));
 }
 
 #[test]
 fn test_snapshot_past_max_age_is_stale()
 {
     let now = Utc::now();
-    assert!(snapshots::is_stale(now - TimeDelta::minutes(16), ALERTS_MAX_AGE, now));
-    assert!(snapshots::is_stale(now - TimeDelta::minutes(121), AVY_MAX_AGE, now));
+    assert!(snapshots::is_stale(now - TimeDelta::minutes(16), snapshots::ALERTS_MAX_AGE, now));
+    assert!(snapshots::is_stale(now - TimeDelta::minutes(121), snapshots::AVY_MAX_AGE, now));
 }
 
 #[test]
@@ -40,8 +40,8 @@ fn test_snapshot_stored_without_fetched_at_is_stale()
         .expect("an avalanche document without fetched_at should still deserialize");
 
     assert_eq!(alerts.fetched_at, DateTime::<Utc>::UNIX_EPOCH);
-    assert!(snapshots::is_stale(alerts.fetched_at, ALERTS_MAX_AGE, Utc::now()));
-    assert!(snapshots::is_stale(avy.fetched_at, AVY_MAX_AGE, Utc::now()));
+    assert!(snapshots::is_stale(alerts.fetched_at, snapshots::ALERTS_MAX_AGE, Utc::now()));
+    assert!(snapshots::is_stale(avy.fetched_at, snapshots::AVY_MAX_AGE, Utc::now()));
 }
 
 #[test]

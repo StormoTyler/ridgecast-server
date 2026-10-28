@@ -13,11 +13,10 @@ use crate::errors;
 use crate::daily_forecast;
 use crate::database;
 use crate::snapshots;
-use crate::models::Snapshot;
 use crate::handlers::{nac, nws};
 use crate::models::{Alert, AlertsSorted, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
     ForecastResponse, ForecastVars, IntVec, Point, Properties,
-    UserPoint};
+    Snapshot, UserPoint};
 
 const SUPPORTED_VERSION: &str = "1";
 // one week

@@ -15,10 +15,9 @@ use chrono_tz::Tz;
 
 // local modules
 use crate::models::{AvalancheData, AvyArea, AvyProperties, Point, 
-    DateTimeTypes, GeometryTypes, RawFeatures, UserPoint, InvalidAvyArea, SkippedFeatures};
-use crate::geometry::convert_geometry;
-use crate::tracking::{self, Validity};
-use crate::models::Snapshot;
+    DateTimeTypes, GeometryTypes, RawFeatures, UserPoint, InvalidAvyArea, SkippedFeatures, Snapshot};
+use crate::geometry;
+use crate::tracking;
 
 const BASE_URL: &str = "https://api.avalanche.org/v2/public/products/map-layer";
 
@@ -133,7 +132,7 @@ pub fn build_avy_map(mut features: Vec<AvyArea>) -> (Vec<AvyArea>, Vec<InvalidAv
 
         if let GeometryTypes::Geojson(geo) = &area.geometry
         {
-            match convert_geometry(geo)
+            match geometry::convert_geometry(geo)
             {
                 Ok(new_geo) => area.geometry = new_geo,
                 Err(error) =>
@@ -207,9 +206,9 @@ pub async fn check_avy_geometry(point: &Point, avy_data: &AvalancheData, now: Da
     let end = area.properties.end_date.as_ref().map(DateTimeTypes::to_utc);
     match tracking::validity(start, end, now)
     {
-        Validity::Current | Validity::NotStarted => ZoneForecast::Current(area.properties.clone()),
-        Validity::Expired => ZoneForecast::Expired,
-        Validity::NoStart | Validity::NoEnd => ZoneForecast::NoForecast,
+        tracking::Validity::Current | tracking::Validity::NotStarted => ZoneForecast::Current(area.properties.clone()),
+        tracking::Validity::Expired => ZoneForecast::Expired,
+        tracking::Validity::NoStart | tracking::Validity::NoEnd => ZoneForecast::NoForecast,
     }
 }
 

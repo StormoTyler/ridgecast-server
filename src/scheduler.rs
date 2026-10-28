@@ -5,7 +5,7 @@
 use chrono::{Duration, Timelike, Utc};
 
 // local modules
-use crate::database::DB;
+use crate::database;
 use crate::snapshots;
 
 // refreshes should occur 5 minutes before the tracker check
@@ -15,7 +15,7 @@ use crate::snapshots;
 // https://api.weather.gov/alerts/active?status=actual
 // using snapshots::refresh_alerts, which also stores the snapshot.
 // :55 keeps one refresh 5 minutes before each hourly tracker check
-async fn refresh_alerts(db: DB)
+async fn refresh_alerts(db: database::DB)
 {
     loop
     {
@@ -43,7 +43,7 @@ async fn refresh_alerts(db: DB)
 // retrieves NAC forecasts hourly, 5 minutes before the hour, from
 // https://api.avalanche.org/v2/public/products/map-layer
 // using snapshots::refresh_avy, which also stores the snapshot
-async fn refresh_avy(db: DB)
+async fn refresh_avy(db: database::DB)
 {
     loop
     {
