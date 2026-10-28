@@ -8,7 +8,7 @@ use mongodb::bson::{doc, Document};
 use serde::Serialize;
 
 // local modules
-use crate::APIError;
+use crate::errors;
 use crate::database::DB;
 use crate::handlers::{nac, nws};
 use crate::models::{AlertsSorted, AvalancheData, InvalidAlert, InvalidAvyArea, SkippedFeatures,
@@ -27,7 +27,7 @@ pub fn is_stale(fetched_at: DateTime<Utc>, max_age: TimeDelta, now: DateTime<Utc
 }
 
 // fetches the active alerts from NWS and replaces the stored snapshot
-pub async fn refresh_alerts(db: &DB) -> Result<AlertsSorted, APIError>
+pub async fn refresh_alerts(db: &DB) -> Result<AlertsSorted, errors::APIError>
 {
     let alerts = fetch_alerts(db).await?;
     store_alerts(db, &alerts).await?;
@@ -35,7 +35,7 @@ pub async fn refresh_alerts(db: &DB) -> Result<AlertsSorted, APIError>
 }
 
 // fetches the avalanche zones from NAC and replaces the stored snapshot
-pub async fn refresh_avy(db: &DB) -> Result<AvalancheData, APIError>
+pub async fn refresh_avy(db: &DB) -> Result<AvalancheData, errors::APIError>
 {
     let avy = fetch_avy(db).await?;
     store_avy(db, &avy).await?;
@@ -44,7 +44,7 @@ pub async fn refresh_avy(db: &DB) -> Result<AvalancheData, APIError>
 
 // reads the stored alerts, refreshing them first if they are missing, unreadable, or stale
 // errors only when NWS can't be reached and there is no stored snapshot to fall back on
-pub async fn load_alerts(db: &DB) -> Result<Snapshot<AlertsSorted>, APIError>
+pub async fn load_alerts(db: &DB) -> Result<Snapshot<AlertsSorted>, errors::APIError>
 {
     if let Some(alerts) = read_alerts(db).await
         .filter(|alerts| !is_stale(alerts.fetched_at, ALERTS_MAX_AGE, Utc::now()))
@@ -83,7 +83,7 @@ pub async fn load_alerts(db: &DB) -> Result<Snapshot<AlertsSorted>, APIError>
 // reads the stored avalanche zones, refreshing them first if they are missing,
 // unreadable, or stale. errors only when NAC can't be reached and there is no
 // stored snapshot to fall back on
-pub async fn load_avy(db: &DB) -> Result<Snapshot<AvalancheData>, APIError>
+pub async fn load_avy(db: &DB) -> Result<Snapshot<AvalancheData>, errors::APIError>
 {
     if let Some(avy) = read_avy(db).await
         .filter(|avy| !is_stale(avy.fetched_at, AVY_MAX_AGE, Utc::now()))
@@ -123,12 +123,12 @@ pub async fn load_avy(db: &DB) -> Result<Snapshot<AvalancheData>, APIError>
 // couldn't be deserialized. fails if too many couldn't be deserialized, so
 // the loader falls back to the last good snapshot instead of storing a
 // snapshot that is missing alerts
-async fn fetch_alerts(db: &DB) -> Result<AlertsSorted, APIError>
+async fn fetch_alerts(db: &DB) -> Result<AlertsSorted, errors::APIError>
 {
     let (alerts, invalid_alerts, skipped) = nws::get_alerts().await.map_err(|e|
     {
         eprintln!("fetch_alerts: failed to get alerts: {e}");
-        if e.is_timeout() { APIError::UpstreamTimeout } else { APIError::AlertsError }
+        if e.is_timeout() { errors::APIError::UpstreamTimeout } else { errors::APIError::AlertsError }
     })?;
     store_skipped_features(db, &skipped).await;
     if skipped.too_many()
@@ -136,7 +136,7 @@ async fn fetch_alerts(db: &DB) -> Result<AlertsSorted, APIError>
         eprintln!("fetch_alerts: {} of {} alerts couldn't be deserialized, at least \
             {SKIPPED_FEATURES_FAIL_PERCENT}%, so the alerts are not used",
             skipped.features.len(), skipped.total);
-        return Err(APIError::AlertsError);
+        return Err(errors::APIError::AlertsError);
     }
 
     // the invalid alerts are only kept for debugging, so failing
@@ -223,12 +223,12 @@ where
 // fetches the avalanche zones from NAC and stores any whose geometry could not
 // be converted or that couldn't be deserialized. fails if too many couldn't be
 // deserialized, for the same reason as fetch_alerts
-async fn fetch_avy(db: &DB) -> Result<AvalancheData, APIError>
+async fn fetch_avy(db: &DB) -> Result<AvalancheData, errors::APIError>
 {
     let (avy, invalid_areas, skipped) = nac::get_avy().await.map_err(|e|
     {
         eprintln!("fetch_avy: failed to get avalanche data: {e}");
-        if e.is_timeout() { APIError::UpstreamTimeout } else { APIError::NACError }
+        if e.is_timeout() { errors::APIError::UpstreamTimeout } else { errors::APIError::NACError }
     })?;
     store_skipped_features(db, &skipped).await;
     if skipped.too_many()
@@ -236,7 +236,7 @@ async fn fetch_avy(db: &DB) -> Result<AvalancheData, APIError>
         eprintln!("fetch_avy: {} of {} avalanche zones couldn't be deserialized, at least \
             {SKIPPED_FEATURES_FAIL_PERCENT}%, so the avalanche data is not used",
             skipped.features.len(), skipped.total);
-        return Err(APIError::NACError);
+        return Err(errors::APIError::NACError);
     }
 
     // the invalid zones are only kept for debugging, so failing
@@ -254,7 +254,7 @@ async fn fetch_avy(db: &DB) -> Result<AvalancheData, APIError>
 
 // swaps the stored snapshot in one operation, so a failed write
 // never leaves the collection empty
-async fn store_alerts(db: &DB, alerts: &AlertsSorted) -> Result<(), APIError>
+async fn store_alerts(db: &DB, alerts: &AlertsSorted) -> Result<(), errors::APIError>
 {
     db.alerts_collection
         .replace_one(doc! {}, alerts)
@@ -264,11 +264,11 @@ async fn store_alerts(db: &DB, alerts: &AlertsSorted) -> Result<(), APIError>
         .map_err(|e|
         {
             eprintln!("store_alerts: failed to store alerts: {e}");
-            APIError::DatabaseError
+            errors::APIError::DatabaseError
         })
 }
 
-async fn store_avy(db: &DB, avy: &AvalancheData) -> Result<(), APIError>
+async fn store_avy(db: &DB, avy: &AvalancheData) -> Result<(), errors::APIError>
 {
     db.avy_collection
         .replace_one(doc! {}, avy)
@@ -278,7 +278,7 @@ async fn store_avy(db: &DB, avy: &AvalancheData) -> Result<(), APIError>
         .map_err(|e|
         {
             eprintln!("store_avy: failed to store avalanche data: {e}");
-            APIError::DatabaseError
+            errors::APIError::DatabaseError
         })
 }
 

@@ -9,13 +9,12 @@ use chrono::{DateTime, Days, TimeZone, Utc};
 use serde::Serialize;
 
 // local modules
-use crate::{APIError, add_alert_tracker};
+use crate::errors;
 use crate::daily_forecast;
-use crate::database::DB;
+use crate::database;
 use crate::snapshots;
 use crate::models::Snapshot;
 use crate::handlers::{nac, nws};
-use crate::handlers::nac::ZoneForecast;
 use crate::models::{Alert, AlertsSorted, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
     ForecastResponse, ForecastVars, IntVec, NWSError, Point, Properties,
     UserPoint};
@@ -428,8 +427,8 @@ pub(crate) fn trim_ints(mut series: IntVec, end: DateTime<Utc>) -> IntVec
 // returns the avalanche zone's data at any danger level when track_avy is True,
 // and only at danger level 3 or higher when it is False
 // user is the sender's phone number, which identifies the user
-pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
-    -> Result<SmsForecastResponse, APIError>
+pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &database::DB)
+    -> Result<SmsForecastResponse, errors::APIError>
 {
     let SmsRequest { lat, lon, tracker_duration, forecast_length, tracker_name, forecast_vars } = request;
     let (lat, lon) = (*lat, *lon);
@@ -459,7 +458,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     {
         // the point is still needed to check alerts and create trackers
         let point = nws::get_point(lat, lon).await
-            .map_err(|e| nws_error("get_point", lat, lon, e, APIError::NWSError))?;
+            .map_err(|e| nws_error("get_point", lat, lon, e, errors::APIError::NWSError))?;
         let active_alerts = nws::check_alerts(&alerts, &point);
         (point, None, active_alerts)
     }
@@ -467,7 +466,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
     {
         let ForecastResponse { point, forecast, alerts: active_alerts } =
             nws::get_forecast(lat, lon, &alerts).await
-            .map_err(|e| nws_error("get_forecast", lat, lon, e, APIError::ForecastError))?;
+            .map_err(|e| nws_error("get_forecast", lat, lon, e, errors::APIError::ForecastError))?;
         // forecast days are local days at the location. NWS reports a time zone for
         // every point it covers, so UTC days are only a fallback
         let now = Utc::now();
@@ -517,18 +516,18 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         }
         Some(avy_data) if track_avy => match nac::check_avy_geometry(&point, avy_data, now).await
         {
-            ZoneForecast::Current(zone) => Some(zone),
-            ZoneForecast::NoZone => None,
+            nac::ZoneForecast::Current(zone) => Some(zone),
+            nac::ZoneForecast::NoZone => None,
             // the zone is still tracked with no stored forecast,
             // so its next forecast is reported as new
-            ZoneForecast::NoForecast | ZoneForecast::Expired =>
+            nac::ZoneForecast::NoForecast | nac::ZoneForecast::Expired =>
             {
                 avy_notice = Some("There is no current avalanche forecast for this location.");
                 None
             }
             // the zone is still tracked, so the first forecast
             // after its season starts is reported as new
-            ZoneForecast::OffSeason =>
+            nac::ZoneForecast::OffSeason =>
             {
                 avy_notice = Some("The avalanche center for this location is in its off season.");
                 None
@@ -586,10 +585,10 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
         // the forecast is the safety information, so it is sent even if the
         // tracker can't be saved. the save is retried once, then the user is told
         let name = tracker_name.as_deref().unwrap_or("without name");
-        if let Err(e) = add_alert_tracker(&user_point, db).await
+        if let Err(e) = database::add_tracker(&user_point, db).await
         {
             eprintln!("get_requested_forecast: failed to save tracker {name}, retrying once: {e}");
-            if let Err(e) = add_alert_tracker(&user_point, db).await
+            if let Err(e) = database::add_tracker(&user_point, db).await
             {
                 eprintln!("get_requested_forecast: retry failed, tracker {name} was not created: {e}");
                 tracker_notice = Some("Could not create tracker.");
@@ -602,14 +601,14 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &DB)
 }
 
 // maps an NWS error the same way the route handlers do
-fn nws_error(call: &str, lat: f32, lon: f32, e: NWSError, fallback: APIError) -> APIError
+fn nws_error(call: &str, lat: f32, lon: f32, e: NWSError, fallback: errors::APIError) -> errors::APIError
 {
     if e.is_not_found()
     {
-        return APIError::LocationNotCovered;
+        return errors::APIError::LocationNotCovered;
     }
     eprintln!("get_requested_forecast: {call} failed for {lat},{lon}: {e}");
-    if e.is_timeout() { APIError::UpstreamTimeout } else { fallback }
+    if e.is_timeout() { errors::APIError::UpstreamTimeout } else { fallback }
 }
 
 // checks if the point is in any avalanche forecast zone
@@ -619,10 +618,10 @@ async fn get_avy_no_tracker(point: &Point, avy_data: &AvalancheData, now: DateTi
     match nac::check_avy_geometry(point, avy_data, now).await
     {
         // NAC rates danger 1 (low) to 5 (extreme), 3 is considerable
-        ZoneForecast::Current(zone) =>
+        nac::ZoneForecast::Current(zone) =>
             Some(zone).filter(|properties| properties.danger_level.is_some_and(|level| level >= 3)),
         // without track_avy, a zone without a valid forecast isn't reported
-        ZoneForecast::NoZone | ZoneForecast::OffSeason | ZoneForecast::NoForecast
-            | ZoneForecast::Expired => None,
+        nac::ZoneForecast::NoZone | nac::ZoneForecast::OffSeason | nac::ZoneForecast::NoForecast
+            | nac::ZoneForecast::Expired => None,
     }
 }

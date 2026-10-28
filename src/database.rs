@@ -83,3 +83,10 @@ impl DB {
         })
     }
 }
+
+// saves a new tracker to the points collection
+pub async fn add_tracker(user_point: &UserPoint, db: &DB) -> Result<()>
+{
+    db.points_collection.insert_one(user_point).await?;
+    Ok(())
+}
