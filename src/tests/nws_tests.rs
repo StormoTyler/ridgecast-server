@@ -2,7 +2,7 @@
 use std::collections::HashSet;
 
 use crate::handlers::nws;
-use crate::models::{Alert, Alerts, AlertsSorted, Geocode, GeometryErrorReason, GeometryTypes, InvalidAlert, InvalidAlertReason, NWR, Point, PointGeometry,
+use crate::models::{Alert, Alerts, AlertsSorted, Geocode, GeometryErrorReason, GeometryTypes, InvalidAlert, InvalidAlertReason, Nwr, Point, PointGeometry,
     PointProperties, RawFeatures};
 
 const TEST_DATA: &str = include_str!("test_data/nws_alerts_test_data");
@@ -45,7 +45,7 @@ fn make_point(lat: f64, lon: f64, same_code: &str) -> Point
             cwa: "TEST".to_string(),
             grid_x: 0,
             grid_y: 0,
-            nwr: NWR { same_code: same_code.to_string() },
+            nwr: Nwr { same_code: same_code.to_string() },
             astronomical_data: None,
             time_zone: None,
         },

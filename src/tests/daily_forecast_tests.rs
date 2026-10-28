@@ -3,7 +3,7 @@ use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 
 use crate::daily_forecast;
-use crate::models::{NWR, Point, PointGeometry, PointProperties};
+use crate::models::{Nwr, Point, PointGeometry, PointProperties};
 
 const LOS_ANGELES: Tz = chrono_tz::America::Los_Angeles;
 
@@ -28,7 +28,7 @@ fn point_with_time_zone(time_zone: Option<&str>) -> Point
             cwa: "TEST".to_string(),
             grid_x: 0,
             grid_y: 0,
-            nwr: NWR { same_code: "000000".to_string() },
+            nwr: Nwr { same_code: "000000".to_string() },
             astronomical_data: None,
             time_zone: time_zone.map(str::to_string),
         },

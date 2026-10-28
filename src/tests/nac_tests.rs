@@ -4,7 +4,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use crate::handlers::nac;
 use crate::models::{AvalancheData, AvyArea, AvyProperties, DateTimeTypes, ForecastVars,
     InvalidAvyArea, GeometryErrorReason,
-    GeometryTypes, NWR, Point, PointGeometry, PointProperties, RawFeatures, Snapshot, UserPoint};
+    GeometryTypes, Nwr, Point, PointGeometry, PointProperties, RawFeatures, Snapshot, UserPoint};
 
 const TEST_DATA: &str = include_str!("test_data/nac_test_data.json");
 
@@ -56,7 +56,7 @@ fn make_point(lat: f64, lon: f64) -> Point
             cwa: "TEST".to_string(),
             grid_x: 0,
             grid_y: 0,
-            nwr: NWR { same_code: "000000".to_string() },
+            nwr: Nwr { same_code: "000000".to_string() },
             astronomical_data: None,
             time_zone: None,
         },

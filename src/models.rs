@@ -1,9 +1,5 @@
-use geojson;
-use geo;
-use geo_types;
-use chrono::{DateTime, Duration, FixedOffset, Utc, format::ParseError};
+use chrono::{DateTime, Duration, FixedOffset, Utc};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
-use serde_json::json;
 use std::collections::HashMap;
 
 // local modules
@@ -46,6 +42,8 @@ pub struct UserPoint
 impl UserPoint
 {
     // the tracker stops valid_duration hours after it was added
+    // unused until the scheduler checks tracker expiry, remove the allow then
+    #[allow(dead_code)]
     pub fn expires_at(&self) -> DateTime<Utc>
     {
         self.time_added + Duration::hours(self.valid_duration.into())
@@ -82,24 +80,19 @@ pub struct ForecastProperties
     pub wind_gust: bool,
 }
                            
-#[derive(Debug)]           
-pub struct User            
-{                          
-   pub user_id: String,       
-   pub email: String,         
-   pub phone: String,         
-}                          
 // end user data models
 
 // data structures for checking and responding to trackers
 
-#[derive(Debug, Serialize, Deserialize)]              
+// unused until the scheduler builds it, remove the allow then
+#[allow(dead_code)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TrackerResponse
 {
-    pub User: UserPoint,
-    pub Alerts: Option<Vec<Alert>>,
-    pub Avy: Option<AvyProperties>,
-    pub Daily: Option<Properties>,
+    pub user: UserPoint,
+    pub alerts: Option<Vec<Alert>>,
+    pub avy: Option<AvyProperties>,
+    pub daily: Option<Properties>,
 }
 
 // data structures for nws points endpoint                   
@@ -128,7 +121,7 @@ pub struct PointProperties
    pub cwa: String,                                             
    pub grid_x: i32,                                             
    pub grid_y: i32,                                             
-   pub nwr: NWR,                                                
+   pub nwr: Nwr,                                                
     // This one is an option                                 
     // because the forecast is still useful without it       
     pub astronomical_data: Option<AstronomicalData>,
@@ -139,7 +132,7 @@ pub struct PointProperties
                                                              
 #[derive(Debug, Serialize, Deserialize, Clone)]              
 #[serde(rename_all = "camelCase")]                           
-pub struct NWR                                               
+pub struct Nwr                                               
 {                                                            
     // not option because I dont want to return a forecast   
     // if I cant check alerts                                

@@ -3,11 +3,8 @@
 use reqwest::Client;
 use once_cell::sync::Lazy;
 use std::time::Duration;
-use serde::{Deserialize, Serialize};
 use serde_json;
-use std::io;
 use thiserror::Error;
-use geojson;
 use geo;
 use geo::Intersects;
 use chrono::{DateTime, Utc};
@@ -238,6 +235,8 @@ pub enum AvyTrackerUpdate
 // UserPoint.avy_lost records that they were told it was lost, so a loss is
 // notified once and a forecast that returns unchanged is not sent again.
 // a stale snapshot counts as losing the forecast
+// unused until the scheduler calls it, remove the allow then
+#[allow(dead_code)]
 pub async fn check_avy_tracker(user_point: &mut UserPoint, snapshot: &Snapshot<AvalancheData>,
     now: DateTime<Utc>) -> AvyTrackerUpdate
 {

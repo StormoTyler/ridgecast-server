@@ -1,24 +1,12 @@
 use axum::
 {
-    extract::{Path, Query, Request, Extension, State},
-    body::Body,
+    extract::{Query, State},
     http::HeaderValue,
     response::{IntoResponse, Response},
-    routing::{get, post, put, delete},
+    routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
-use serde_json::json;
-use mongodb::
-{
-    results::{DeleteResult, InsertOneResult,
-    UpdateResult,},
-    Client, Collection
-};
-use std::sync::Arc;
-use futures::stream::{StreamExt, TryStreamExt};
-use geojson::{GeoJson, Geometry, GeometryValue};
-use geo;
 
 // local modules
 mod handlers;
@@ -27,6 +15,8 @@ mod database;
 mod errors;
 use crate::models::Snapshot;
 mod models;
+// unused until an SMS route is added, remove the allow then
+#[allow(dead_code)]
 mod sms;
 mod snapshots;
 mod daily_forecast;
@@ -34,11 +24,7 @@ mod geometry;
 mod tracking;
 #[cfg(test)]
 mod tests;
-use crate::models::{UserPoint, Point, ForecastVars, ForecastProperties, PointGeometry, PointProperties,
-    NWR, Alerts, Alert, GeometryTypes, AlertData,
-    Geocode, AlertsSorted, Forecast, Properties,
-    Elevation, IntVec, TimeInt, FloatVec, TimeFloat, ForecastResponse,
-    AvalancheData, AvyArea, AvyProperties};
+use crate::models::{UserPoint, ForecastVars};
 
 #[tokio::main]                                                                
 async fn main() -> Result<(), Box<dyn std::error::Error>>                     

@@ -171,11 +171,9 @@ fn parse_coordinate(value: &str, max_int_digits: usize, limit: f32) -> Option<f3
         return None;
     }
     if let Some(frac_part) = frac_part
+        && !is_digits(frac_part, 4)
     {
-        if !is_digits(frac_part, 4)
-        {
-            return None;
-        }
+        return None;
     }
 
     let parsed: f32 = value.parse().ok()?;
@@ -201,7 +199,7 @@ fn parse_tracker_duration(value: &str, creates_tracker: bool) -> Option<u32>
     {
         return Some(168);
     }
-    if (creates_tracker && hours == 0)
+    if creates_tracker && hours == 0
     {
         return None;
     }

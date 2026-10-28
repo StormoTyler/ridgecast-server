@@ -1,21 +1,13 @@
 // handler for NWS api
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use serde_json;
-use std::io;
 use thiserror::Error;
-use geojson;
 use geo::Intersects;
-use geo_types::{Polygon, line_string, point};
 use once_cell::sync::Lazy;
 use std::time::Duration;
-use chrono::{DateTime, FixedOffset, format::ParseError};
 
-use crate::models::{Point, PointGeometry, PointProperties,
-    NWR, Alerts, Alert, GeometryTypes,
-    AlertData, Geocode, AlertsSorted,
-    Forecast, Properties, Elevation, IntVec, TimeInt,
-    FloatVec, TimeFloat, ForecastResponse, RawFeatures,
+use crate::models::{Point, Alerts, Alert, GeometryTypes, Geocode, AlertsSorted,
+    Forecast, Properties, ForecastResponse, RawFeatures,
     InvalidAlert, InvalidAlertReason, SkippedFeatures};
 use crate::geometry;
 
@@ -298,7 +290,7 @@ pub fn check_alerts(alerts: &AlertsSorted, point: &Point) -> Vec<Alert>
             checked.push(alert.clone());
         }
     }
-    return checked
+    checked
 }
 
 pub async fn get_point(lat:f32, lon: f32) -> Result<Point, NWSError>
@@ -349,8 +341,8 @@ pub async fn get_forecast(lat: f32, lon: f32, alerts: &AlertsSorted) ->
 
     let forecast_response = ForecastResponse
     {
-        point: point,
-        forecast: forecast,
+        point,
+        forecast,
         alerts: active_alerts,
     };
     Ok(forecast_response)
