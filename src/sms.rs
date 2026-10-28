@@ -513,7 +513,7 @@ pub async fn get_requested_forecast(request: &SmsRequest, user: &str, db: &datab
         }
         Some(avy_data) if track_avy => match nac::check_avy_geometry(&point, avy_data, now).await
         {
-            nac::ZoneForecast::Current(zone) => Some(zone),
+            nac::ZoneForecast::Current(zone) => Some(zone.clone()),
             nac::ZoneForecast::NoZone => None,
             // the zone is still tracked with no stored forecast,
             // so its next forecast is reported as new
@@ -616,7 +616,7 @@ async fn get_avy_no_tracker(point: &Point, avy_data: &AvalancheData, now: DateTi
     {
         // NAC rates danger 1 (low) to 5 (extreme), 3 is considerable
         nac::ZoneForecast::Current(zone) =>
-            Some(zone).filter(|properties| properties.danger_level.is_some_and(|level| level >= 3)),
+            Some(zone).filter(|properties| properties.danger_level.is_some_and(|level| level >= 3)).cloned(),
         // without track_avy, a zone without a valid forecast isn't reported
         nac::ZoneForecast::NoZone | nac::ZoneForecast::OffSeason | nac::ZoneForecast::NoForecast
             | nac::ZoneForecast::Expired => None,

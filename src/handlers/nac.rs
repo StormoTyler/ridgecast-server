@@ -158,13 +158,15 @@ pub fn build_avy_map(mut features: Vec<AvyArea>) -> (Vec<AvyArea>, Vec<InvalidAv
 }
 
 // the forecast state of the avalanche zone containing a point. these are
-// normal states, not errors, so callers match each one instead of logging them
+// normal states, not errors, so callers match each one instead of logging them.
+// Current borrows the forecast from the avalanche data, so it is only cloned
+// by callers that keep it
 #[derive(Debug, Clone, PartialEq)]
-pub enum ZoneForecast
+pub enum ZoneForecast<'a>
 {
     // a valid forecast: it has a start_date and an end_date that hasn't passed.
     // a forecast that hasn't started yet is valid
-    Current(AvyProperties),
+    Current(&'a AvyProperties),
     // the point isn't in any zone
     NoZone,
     // the zone's center is in its off season
@@ -177,7 +179,8 @@ pub enum ZoneForecast
 
 // checks which avalanche forecast zone a point intersects with
 // and returns the state of its forecast
-pub async fn check_avy_geometry(point: &Point, avy_data: &AvalancheData, now: DateTime<Utc>) -> ZoneForecast
+pub async fn check_avy_geometry<'a>(point: &Point, avy_data: &'a AvalancheData, now: DateTime<Utc>)
+    -> ZoneForecast<'a>
 {
     let coordinates = point.geometry.coordinates;
 
@@ -203,7 +206,7 @@ pub async fn check_avy_geometry(point: &Point, avy_data: &AvalancheData, now: Da
     let end = area.properties.end_date.as_ref().map(DateTimeTypes::to_utc);
     match tracking::validity(start, end, now)
     {
-        tracking::Validity::Current | tracking::Validity::NotStarted => ZoneForecast::Current(area.properties.clone()),
+        tracking::Validity::Current | tracking::Validity::NotStarted => ZoneForecast::Current(&area.properties),
         tracking::Validity::Expired => ZoneForecast::Expired,
         tracking::Validity::NoStart | tracking::Validity::NoEnd => ZoneForecast::NoForecast,
     }
@@ -253,9 +256,9 @@ pub async fn check_avy_tracker(user_point: &mut UserPoint, snapshot: &Snapshot<A
             user_point.avy_off_season.clear();
             // any changed field counts as a new forecast, since avalanche
             // information is safety critical it is better to over report
-            if user_point.avy.as_ref() != Some(&current)
+            if user_point.avy.as_ref() != Some(current)
             {
-                user_point.avy = Some(current);
+                user_point.avy = Some(current.clone());
                 AvyTrackerUpdate::NewForecast
             }
             else if was_lost

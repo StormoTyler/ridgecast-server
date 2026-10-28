@@ -95,7 +95,7 @@ async fn matched_name(avy: &AvalancheData, lat: f64, lon: f64) -> Option<String>
 {
     match nac::check_avy_geometry(&make_point(lat, lon), avy, test_now()).await
     {
-        nac::ZoneForecast::Current(properties) => properties.name,
+        nac::ZoneForecast::Current(properties) => properties.name.clone(),
         nac::ZoneForecast::NoZone => None,
         other => panic!("geometry test zones should have a current forecast, got {other:?}"),
     }
