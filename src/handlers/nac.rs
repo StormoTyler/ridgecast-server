@@ -18,7 +18,7 @@ use crate::models::{AvalancheData, AvyArea, AvyProperties, Point,
     DateTimeTypes, GeometryTypes, RawFeatures, UserPoint, InvalidAvyArea, SkippedFeatures};
 use crate::geometry::convert_geometry;
 use crate::tracking::{self, Validity};
-use crate::snapshots::Snapshot;
+use crate::models::Snapshot;
 
 const BASE_URL: &str = "https://api.avalanche.org/v2/public/products/map-layer";
 
