@@ -1,11 +1,14 @@
 use axum::{
     Json, Router,
     extract::{Query, State},
-    http::HeaderValue,
+    http::{HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use mongodb::bson::doc;
 use serde::Deserialize;
+use serde_json::json;
+use std::time::Duration;
 
 // local modules
 mod handlers;
@@ -13,10 +16,10 @@ use crate::handlers::nws;
 mod database;
 mod errors;
 use crate::models::Snapshot;
-mod models;
-// unused until an SMS route is added, remove the allow then
 mod daily_forecast;
 mod geometry;
+mod models;
+// unused until an SMS route is added, remove the allow then
 #[allow(dead_code)]
 mod sms;
 mod snapshots;
@@ -64,6 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn app(db: database::DB) -> Router {
     Router::new()
         .route("/", get(homepage))
+        .route("/health", get(health))
         .route("/forecast", get(new_forecast))
         .route("/forecast/scheduled", post(schedule_forecast))
         .route("/alerts", get(get_alerts))
@@ -74,6 +78,55 @@ fn app(db: database::DB) -> Router {
 }
 
 async fn homepage() {}
+
+// a snapshot only fails the health check once it is this far past its max age.
+// the scheduler refreshes alerts every ALERTS_MAX_AGE, so the snapshot passes its
+// max age for the few seconds each refresh takes, which shouldn't alert anyone
+const HEALTH_STALE_GRACE: chrono::TimeDelta = chrono::TimeDelta::minutes(5);
+
+// for uptime monitors: 503 when MongoDB can't be reached or a snapshot is missing
+// or stale, since the scheduler keeps both snapshots fresh while the server runs.
+// a stale snapshot means the scheduled refreshes are failing, such as NWS or NAC
+// being down or changing their format
+async fn health(State(db): State<database::DB>) -> Response {
+    // bounded, since the driver waits up to 30 seconds for an unreachable
+    // server and a monitor would time out first
+    let admin = db.points_collection.client().database("admin");
+    let ping = admin.run_command(doc! { "ping": 1 });
+    if !matches!(
+        tokio::time::timeout(Duration::from_secs(5), ping).await,
+        Ok(Ok(_))
+    ) {
+        eprintln!("health: MongoDB did not respond to a ping");
+        let body = json!({ "status": "unavailable", "database": "unreachable" });
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response();
+    }
+
+    let now = chrono::Utc::now();
+    // a missing snapshot counts as stale
+    let is_stale = |fetched_at: Option<chrono::DateTime<chrono::Utc>>, max_age| {
+        fetched_at.is_none_or(|fetched_at| {
+            snapshots::is_stale(fetched_at, max_age + HEALTH_STALE_GRACE, now)
+        })
+    };
+    let alerts = snapshots::read_fetched_at(&db.alerts_collection).await;
+    let avy = snapshots::read_fetched_at(&db.avy_collection).await;
+    let alerts_stale = is_stale(alerts, snapshots::ALERTS_MAX_AGE);
+    let avy_stale = is_stale(avy, snapshots::AVY_MAX_AGE);
+
+    let (status_code, status) = if alerts_stale || avy_stale {
+        (StatusCode::SERVICE_UNAVAILABLE, "stale")
+    } else {
+        (StatusCode::OK, "ok")
+    };
+    let body = json!({
+        "status": status,
+        "database": "ok",
+        "alerts": { "fetched_at": alerts, "stale": alerts_stale },
+        "avy": { "fetched_at": avy, "stale": avy_stale },
+    });
+    (status_code, Json(body)).into_response()
+}
 
 async fn new_forecast(State(db): State<database::DB>) -> Response {
     let Snapshot {

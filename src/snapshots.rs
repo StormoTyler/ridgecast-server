@@ -331,3 +331,18 @@ async fn read_avy(db: &database::DB) -> Option<AvalancheData> {
             None
         })
 }
+
+// when a stored snapshot was fetched, read without loading the snapshot itself,
+// which for alerts can be close to a megabyte. None when it's missing or unreadable
+pub async fn read_fetched_at<T: Send + Sync>(collection: &Collection<T>) -> Option<DateTime<Utc>> {
+    let document = collection
+        .clone_with_type::<Document>()
+        .find_one(doc! {})
+        .projection(doc! { "fetched_at": 1 })
+        .await
+        .ok()??;
+    document
+        .get_datetime("fetched_at")
+        .ok()
+        .map(|fetched_at| fetched_at.to_chrono())
+}
