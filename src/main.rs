@@ -18,6 +18,9 @@ mod errors;
 use crate::models::Snapshot;
 mod daily_forecast;
 mod geometry;
+// unused until the SMS route or the tracker checks send messages, remove the allow then
+#[allow(dead_code)]
+mod messaging;
 mod models;
 mod scheduler;
 // unused until an SMS route is added, remove the allow then
