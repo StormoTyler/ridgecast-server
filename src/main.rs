@@ -19,6 +19,7 @@ use crate::models::Snapshot;
 mod daily_forecast;
 mod geometry;
 mod models;
+mod scheduler;
 // unused until an SMS route is added, remove the allow then
 #[allow(dead_code)]
 mod sms;
@@ -56,6 +57,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("startup: avalanche refresh failed: {e}");
         }
     });
+
+    // scheduled refreshes keep the snapshots fresh while the server runs:
+    // alerts at :10, :25, :40 and :55, avalanche data at :55
+    tokio::spawn(scheduler::refresh_alerts(db.clone()));
+    tokio::spawn(scheduler::refresh_avy(db.clone()));
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 5001));
     println!("Listening on: {}", addr);

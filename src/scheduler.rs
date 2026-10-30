@@ -1,4 +1,4 @@
-// scheduler for retreiving NWS alerts, and NAC forecasts 
+// scheduler for retreiving NWS alerts, and NAC forecasts
 // checking alerts, and avalanche forecast trackers
 // and sending daily forecasts
 
@@ -15,26 +15,24 @@ use crate::snapshots;
 // https://api.weather.gov/alerts/active?status=actual
 // using snapshots::refresh_alerts, which also stores the snapshot.
 // :55 keeps one refresh 5 minutes before each hourly tracker check
-async fn refresh_alerts(db: database::DB)
-{
-    loop
-    {
+pub async fn refresh_alerts(db: database::DB) {
+    loop {
         // the next of :10, :25, :40 or :55 in UTC, worked out from the clock
         // each time, so the schedule doesn't drift
         let now = Utc::now();
-        let mut next = now.date_naive().and_hms_opt(now.hour(), 10, 0)
+        let mut next = now
+            .date_naive()
+            .and_hms_opt(now.hour(), 10, 0)
             .expect("10 minutes past a valid hour is a valid time")
             .and_utc();
-        while next <= now
-        {
+        while next <= now {
             next += Duration::minutes(15);
         }
         tokio::time::sleep((next - now).to_std().unwrap_or_default()).await;
 
         // a failed refresh is only logged, the loaders refresh stale data on use
         // and the next scheduled refresh tries again
-        if let Err(e) = snapshots::refresh_alerts(&db).await
-        {
+        if let Err(e) = snapshots::refresh_alerts(&db).await {
             eprintln!("refresh_alerts: scheduled alerts refresh failed: {e}");
         }
     }
@@ -43,42 +41,44 @@ async fn refresh_alerts(db: database::DB)
 // retrieves NAC forecasts hourly, 5 minutes before the hour, from
 // https://api.avalanche.org/v2/public/products/map-layer
 // using snapshots::refresh_avy, which also stores the snapshot
-async fn refresh_avy(db: database::DB)
-{
-    loop
-    {
+pub async fn refresh_avy(db: database::DB) {
+    loop {
         // the next :55 in UTC, which is :55 local time in every whole-hour time zone.
         // worked out from the clock each time, so the schedule doesn't drift
         let now = Utc::now();
-        let mut next = now.date_naive().and_hms_opt(now.hour(), 55, 0)
+        let mut next = now
+            .date_naive()
+            .and_hms_opt(now.hour(), 55, 0)
             .expect("55 minutes past a valid hour is a valid time")
             .and_utc();
-        if next <= now
-        {
+        if next <= now {
             next += Duration::hours(1);
         }
         tokio::time::sleep((next - now).to_std().unwrap_or_default()).await;
 
         // a failed refresh is only logged, the loaders refresh stale data on use
         // and the next scheduled refresh tries again
-        if let Err(e) = snapshots::refresh_avy(&db).await
-        {
+        if let Err(e) = snapshots::refresh_avy(&db).await {
             eprintln!("refresh_avy: scheduled avalanche refresh failed: {e}");
         }
     }
 }
 
-// checks every tracker hourly on the hour 
+// checks every tracker hourly on the hour
 // i.e. checks at 00:00, 01:00 ... 23:00
 // for each UserPoint in the point_collection
-async fn check_trackers() 
-{
+// unused until the tracker checks are implemented, remove the allow then
+#[allow(dead_code)]
+async fn check_trackers() {
     // retrieve each UserPoint in point_collection
-    // load alerts snapshot 
+    // load alerts snapshot
     // load avalanche snapshot
     // then call check_tracker on the point
 }
 
+// pseudocode until the tracker checks are implemented, commented out so the
+// module compiles and the refresh loops can run
+/*
 async fn check_tracker(user_point: UserPoint, alerts: )
 {
     let point: Point = user_point.point
@@ -110,6 +110,6 @@ async fn check_tracker(user_point: UserPoint, alerts: )
     // to send a message to the user if there is a new daily forecast
     // new alerts or new avalanche forecast
     // provide logic to check this, but do not call any function
-    // at this time 
+    // at this time
 }
-
+*/
