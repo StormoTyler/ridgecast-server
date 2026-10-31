@@ -453,6 +453,7 @@ fn forecast_end_in_utc() {
 
 fn floats(times: &[&str]) -> FloatVec {
     FloatVec {
+        uom: "wmoUnit:degC".to_string(),
         values: times
             .iter()
             .map(|time| TimeFloat {
@@ -502,6 +503,7 @@ fn trim_compares_times_with_offsets() {
 #[test]
 fn trim_drops_values_without_a_readable_time() {
     let series = IntVec {
+        uom: "wmoUnit:percent".to_string(),
         values: vec![
             TimeInt {
                 valid_time: None,

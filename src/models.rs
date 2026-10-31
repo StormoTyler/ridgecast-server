@@ -157,7 +157,7 @@ pub struct Alert {
 pub struct AlertData {
     pub area_desc: Option<String>,
     pub effective: Option<chrono::DateTime<FixedOffset>>,
-    pub expires: Option<chrono::DateTime<FixedOffset>>,
+    pub ends: Option<chrono::DateTime<FixedOffset>>,
     pub severity: Option<String>,
     pub certainty: Option<String>,
     pub urgency: Option<String>,
@@ -306,6 +306,7 @@ pub struct Elevation {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IntVec {
+    pub uom: String,
     pub values: Vec<TimeInt>,
 }
 
@@ -319,6 +320,7 @@ pub struct TimeInt {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FloatVec {
+    pub uom: String,
     pub values: Vec<TimeFloat>,
 }
 
