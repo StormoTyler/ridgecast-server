@@ -163,19 +163,25 @@ the alert lines are cut short, the server leaves room for it.
 ```
 Avy danger 3 Considerable, Mt Hood
 Avy danger 4 High (was 3), Mt Hood
+Avy: no danger rating, Mt Hood
 Avy: center is in its off season
 ```
 
 - `Avy danger`, the danger level (1 to 5), the danger rating, then the
-  forecast zone name. Zone names are shortened to fit if needed.
+  forecast zone name. Zone names are never shortened. The longest NAC zone
+  name, `San Francisco Peaks / Kachina Peaks Wilderness` (46 characters), fits
+  in a line with the longest rating and `(was <level>)`.
 - In an avalanche notification, `(was <level>)` gives the previous danger
   level.
-- When there is no rating, the line is one of these notices, matching
+- `Avy: no danger rating`, then the forecast zone name, is sent for a valid
+  forecast with danger level -1. NAC, and other services using its API, treat
+  a -1 forecast as valid but without a rating.
+- When there is no valid forecast, or the data can't be used, the line is one of these notices, matching
   `avy_notice` in `src/sms.rs`:
 
 | Line | Meaning |
 |---|---|
-| `Avy: no current forecast` | The zone has no valid avalanche forecast: none was published, it has no end time, or its end time has passed. A forecast that has not started yet is valid |
+| `Avy: no current forecast` | The zone has no valid avalanche forecast: none was published, it has no end time, its end time has passed, or its danger level is missing or neither 1 to 5 nor -1 (no rating). A forecast that has not started yet is valid |
 | `Avy: center is in its off season` | The zone's avalanche center is in its off season |
 | `Avy: data unavailable, try later` | Avalanche data could not be read |
 | `Avy: data may be out of date` | The stored avalanche data is more than 2 hours old and could not be refreshed from NAC, matching `avy_stale_notice` in `src/sms.rs` |
@@ -293,7 +299,8 @@ Limits per response:
 |---|---|---|
 | Reply | at most 9 | the request's forecast length (1 to 7), dropping the last days to stay within 9 messages |
 | Daily forecast | at most 3 | today and the next 2 days |
-| Alert and avalanche notifications | at most 2 | none |
+| Alert notifications | as many as needed to send every new alert | none |
+| Avalanche notifications | at most 2 | none |
 | Tracker ended, error, help | exactly 1 | none |
 
 A forecast day takes about 60 to 120 characters, depending on the weather and
@@ -352,6 +359,7 @@ The same local time as the full format, written shorter:
 | Alerts unavailable notice | `!alerts not checked` | The full format's `!Alerts could not be checked`. It is never dropped |
 | Alerts stale notice | `!alerts may be old` | The same notice as the full format |
 | Avalanche | `AV3 Considerable` | `AV`, the danger level, and the danger rating |
+| Avalanche no rating | `AV no rating` | The full format's `Avy: no danger rating`, for danger level -1 |
 | Avalanche notice | `AV no forecast`, `AV off season`, `AV unavailable`, `AV may be old` | The same notices as the full format |
 | No tracker notice | `!no tracker` | The full format's `Could not create tracker` notice, matching `tracker_notice` in `src/sms.rs` |
 | Forecast day | `Tu 34/22 SW25 P90 R0.85 S11` | See below |
@@ -510,9 +518,9 @@ Tue: high 68F, low 47F. Wind NW 8mph. Precip 10%
 ## Character set
 
 Messages use only characters from the GSM-7 basic character set, which allows
-160 characters per SMS segment. The server must replace any other character
-in text that comes from NWS or NAC, such as an accented letter in a zone name,
-before sending. Characters from the GSM-7 extension table (`{ } [ ] ~ ^ \ |
+160 characters per SMS segment. Text from NWS and NAC (event names and zone
+names) is used as received: none of it uses characters outside GSM-7, so the
+server doesn't convert it. Characters from the GSM-7 extension table (`{ } [ ] ~ ^ \ |
 €`) are not used, because each one counts as 2 characters. The `°` sign is not
 in GSM-7, so temperatures are written as `34F`.
 
@@ -522,13 +530,15 @@ Only people read replies, so the format can change in any server release
 without breaking the apps. Update the examples in this document with every
 change.
 
-## Open questions
+## Decisions
 
 - **Long messages over satellite on iPhone.** Apple limits messages sent over
   satellite to about 140 characters, but no limit is documented for incoming
-  messages. Test whether a 300-character SMS sent to an iPhone connected by
-  satellite arrives whole, split, or truncated.
+  messages, and it hasn't been tested whether a longer SMS sent to an iPhone
+  connected by satellite arrives whole, split, or truncated. Without the
+  equipment to test it, the format assumes 140 characters per message.
 - **Daily detail.** A forecast day gives daily highs and totals, so it does
-  not show when during the day rain or wind will start. Splitting days into
-  day and night, as NWS text forecasts do, would show more and use about twice
-  the space.
+  not show when during the day rain or wind will start. Days are not split
+  into day and night, as NWS text forecasts do: that would use about twice the
+  space, and keeping the number of messages low comes first, since every
+  message costs satellite messenger users and the server's host.

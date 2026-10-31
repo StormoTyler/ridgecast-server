@@ -155,14 +155,16 @@ pub fn build_avy_map(mut features: Vec<AvyArea>) -> (Vec<AvyArea>, Vec<InvalidAv
 // by callers that keep it
 #[derive(Debug, Clone, PartialEq)]
 pub enum ZoneForecast<'a> {
-    // a valid forecast: it has a start_date and an end_date that hasn't passed.
-    // a forecast that hasn't started yet is valid
+    // a valid forecast: it has a start_date, an end_date that hasn't passed,
+    // and a danger level of 1 to 5 or -1 (no rating). a forecast that hasn't
+    // started yet is valid
     Current(&'a AvyProperties),
     // the point isn't in any zone
     NoZone,
     // the zone's center is in its off season
     OffSeason,
-    // the zone has no start_date or no end_date
+    // the zone has no start_date, no end_date, or a danger level that is
+    // missing or neither -1 nor 1 to 5
     NoForecast,
     // the zone's forecast has passed its end_date
     Expired,
@@ -198,9 +200,18 @@ pub async fn check_avy_geometry<'a>(
         .map(DateTimeTypes::to_utc);
     let end = area.properties.end_date.as_ref().map(DateTimeTypes::to_utc);
     match tracking::validity(start, end, now) {
-        tracking::Validity::Current | tracking::Validity::NotStarted => {
+        // a level on the North American Public Avalanche Danger Scale, 1 (low)
+        // to 5 (extreme), or NAC's -1, a valid forecast with no rating.
+        // any other level is invalid
+        tracking::Validity::Current | tracking::Validity::NotStarted
+            if area
+                .properties
+                .danger_level
+                .is_some_and(|level| matches!(level, -1 | 1..=5)) =>
+        {
             ZoneForecast::Current(&area.properties)
         }
+        tracking::Validity::Current | tracking::Validity::NotStarted => ZoneForecast::NoForecast,
         tracking::Validity::Expired => ZoneForecast::Expired,
         tracking::Validity::NoStart | tracking::Validity::NoEnd => ZoneForecast::NoForecast,
     }

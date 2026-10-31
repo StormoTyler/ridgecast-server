@@ -375,6 +375,66 @@ async fn test_forecast_without_end_date_is_invalid() {
 }
 
 #[tokio::test]
+async fn test_forecast_with_danger_level_off_the_scale_is_invalid() {
+    // not on the 1 to 5 danger scale, and not NAC's -1 (no rating)
+    for level in [None, Some(0), Some(6), Some(-2)] {
+        let mut avy = load_avy();
+        find_zone_mut(&mut avy, FORECAST_ZONE)
+            .properties
+            .danger_level = level;
+        let result = nac::check_avy_geometry(&make_point(43.74, -110.80), &avy, test_now()).await;
+        assert_eq!(
+            result,
+            nac::ZoneForecast::NoForecast,
+            "danger level {level:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_forecast_with_danger_rating_or_no_rating_is_valid() {
+    // -1 is NAC's valid forecast with no rating, as every zone in the test data has
+    for level in [-1, 1, 2, 3, 4, 5] {
+        let mut avy = load_avy();
+        find_zone_mut(&mut avy, FORECAST_ZONE)
+            .properties
+            .danger_level = Some(level);
+        let result = nac::check_avy_geometry(&make_point(43.74, -110.80), &avy, test_now()).await;
+        assert!(
+            matches!(result, nac::ZoneForecast::Current(_)),
+            "danger level {level} gave {result:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_avy_tracker_sends_rated_forecast_after_no_rating() {
+    // the stored forecast has no rating (-1), so a rating is a new forecast
+    let mut avy = load_avy();
+    let mut tracker = tracker_with_current_forecast(&avy);
+    find_zone_mut(&mut avy, FORECAST_ZONE)
+        .properties
+        .danger_level = Some(3);
+    assert_eq!(
+        check_tracker(&mut tracker, &avy, test_now()).await,
+        nac::AvyTrackerUpdate::NewForecast
+    );
+}
+
+#[tokio::test]
+async fn test_avy_tracker_notifies_danger_level_off_the_scale() {
+    let mut avy = load_avy();
+    let mut tracker = tracker_with_current_forecast(&avy);
+    find_zone_mut(&mut avy, FORECAST_ZONE)
+        .properties
+        .danger_level = Some(0);
+    assert_eq!(
+        check_tracker(&mut tracker, &avy, test_now()).await,
+        nac::AvyTrackerUpdate::ForecastLost
+    );
+}
+
+#[tokio::test]
 async fn test_avy_tracker_notifies_expired_forecast_once() {
     let avy = load_avy();
     let mut tracker = tracker_with_current_forecast(&avy);
