@@ -1,6 +1,8 @@
 # RidgeCast SMS reply format
 
-**Status: draft.** Nothing in the server implements this yet.
+**Status: draft.** `src/sms_reply.rs` implements replies to requests, errors,
+and the help message. Daily forecasts and tracker notifications aren't
+implemented yet, and no route sends replies yet.
 
 This document defines the text messages that the RidgeCast server sends to
 users: replies to requests (see [sms-format.md](sms-format.md)), scheduled
@@ -10,9 +12,10 @@ There are two formats:
 
 - The **full format**, with plain words that need no explanation. It is used
   for every message unless the request set `brief`.
-- The **brief format**, a compact message with short labels, used for replies
-  to requests that set `brief`. It is a single message unless its alerts need
-  more. See [Brief format](#brief-format).
+- The **brief format**, a compact message with short labels, used for the
+  reply to a request that set `brief` and for every message from the tracker
+  that request created. A brief message is a single message unless its alerts
+  need more. See [Brief format](#brief-format).
 
 ## Design goals
 
@@ -93,6 +96,10 @@ space and the tracker's name, as given in the request (see
 | Error | A request could not be answered | No | Error line |
 | Help | A message that is not a request | No | Help text |
 
+Every kind sent by a tracker uses the format of the request that created it,
+so a tracker created with `brief` sends brief daily forecasts and
+notifications. Errors and the help message are always in the full format.
+
 ## Full format
 
 ### Body lines
@@ -125,7 +132,7 @@ not name the time zone.
 | Line | Meaning |
 |---|---|
 | `Daily forecast unavailable` | The request set `daily_forecast`, but no daily forecast tracker was created because NWS reported no time zone for the location |
-| `Could not create tracker` | The request asked for a tracker, but it could not be saved, even after one retry, matching `tracker_notice` in `src/sms.rs`. No tracker messages will be sent, so the user should send the request again. It takes the place of the tracker line, at the top of the reply instead of the bottom |
+| `Could not create tracker` | The request asked for a tracker, but it could not be saved, even after one retry, matching `TrackerStatus::NotCreated` in `src/sms.rs`. No tracker messages will be sent, so the user should send the request again. It takes the place of the tracker line, at the top of the reply instead of the bottom |
 
 Notices are the first body lines, above the avalanche line.
 
@@ -191,8 +198,9 @@ since its creation reply already gave the notice.
 ```
 
 `!`, the alert's NWS severity and a colon, the NWS event name, `until`, and
-the alert's expiry time. If the alert has no expiry time, the line ends after
-the event name.
+the time the hazard ends (NWS's `ends`, not `expires`, which is when the alert
+message expires and is often hours or days earlier). If the alert has no end
+time, the line ends after the event name.
 
 - The severity is one of `Extreme`, `Severe`, `Moderate`, `Minor`, and
   `Unknown`. It comes first so it is read first, and it is always included,
@@ -239,7 +247,10 @@ Tue: high 34F, low 22F. Humidity 80-100%. Precip 90%, 0.85in. Snow 11in. Wind SW
 Each day covers local midnight to midnight. A day starts with its name and a
 colon, followed by sentences in the order of the table below. A sentence is
 left out when its optional flag was not set, or when the table says it is
-left out.
+left out. An optional field that was requested but has no data says `N/A`,
+such as `Pressure N/A`, so the user knows it was checked. A base field with no
+data is left out. A series in a unit the server can't convert counts as no
+data, so a value is never shown in the wrong unit.
 
 | Sentence | Field | Flag | Value |
 |---|---|---|---|
@@ -253,8 +264,8 @@ left out.
 | `Elevation 5240ft.` | point elevation | `elevation` | The elevation of the forecast location in feet. Only in the first forecast day of a reply or daily forecast, since it is the same every day |
 | `Ice 0.10in.` | `ice_accumulation` | base | Total ice in inches, 2 decimals. Left out when it is zero |
 | `Wind SW 25mph, gusts 45.` | `wind_direction`, `wind_speed`, `wind_gust` | base, gusts with `wind_gust` | 8-point compass direction (`N`, `NE`, `E`, `SE`, `S`, `SW`, `W`, `NW`) at the time of the highest sustained wind, that speed, and the highest gust, in mph |
-| `Visibility 0.5mi.` | `visibility` | `visibility` | Lowest visibility in miles. `Visibility 10mi` when it is 10 miles or more, the most NWS reports |
-| `Pressure 29.85inHg.` | `pressure` | `pressure` | Lowest pressure in inches of mercury |
+| `Visibility 0.5mi.` | `visibility` | `visibility` | Lowest visibility in miles, 1 decimal under 1 mile and the nearest half mile above. `Visibility 10mi` when it is 10 miles or more, the most NWS reports |
+| `Pressure 29.85inHg.` | `pressure` | `pressure` | Lowest pressure in inches of mercury, 2 decimals. NWS sends pressure without a unit code, so it is read as pascals |
 | `Cloud ceiling 1200ft.` | `ceiling_height` | `ceiling_height` | Lowest cloud ceiling in feet. `Cloud ceiling N/A` when there is no ceiling |
 
 The server converts NWS's metric units to the units above. Rounding is to the
@@ -314,7 +325,7 @@ Limits per response:
 | Kind | Messages | Forecast days |
 |---|---|---|
 | Reply | at most 9 | the request's forecast length (1 to 7), dropping the last days to stay within 9 messages |
-| Daily forecast | at most 3 | today and the next 2 days |
+| Daily forecast | at most 3, or 1 in the brief format unless its alerts need more | today and the next 2 days |
 | Alert notifications | at most 9 | none |
 | Avalanche notifications | at most 2 | none |
 | Tracker ended, error, help | exactly 1 | none |
@@ -330,14 +341,17 @@ the optional fields requested. A day with rain or snow and several optional
 fields fills a message on its own, and two quiet days can share one. The
 7-day reply in the [examples](#examples) takes 9 messages, so a 7-day reply
 takes about 6 to 9 messages. A request asks for fewer days with its forecast
-length field (see [sms-format.md](sms-format.md)). Users who pay per message,
-such as Garmin inReach users, should use `brief`.
+length field (see [sms-format.md](sms-format.md)). The brief format uses
+fewer messages, but it is harder to read, so it is never the default and the
+server never suggests it. Whether to use it is the user's choice in the app.
 
 ## Brief format
 
-A reply to a request with the `brief` flag is a single message, `(1/1)`, in a
-compact format with short labels, unless its alerts need more. It contains,
-in the same order as the full format:
+A request with the `brief` flag gets its reply, and every message from the
+tracker it creates, in a compact format with short labels. Each is a single
+message, `(1/1)`, unless its alerts need more.
+
+A brief reply contains, in the same order as the full format:
 
 1. `!no tracker`, only when the request asked for a tracker that could not be
    created.
@@ -364,8 +378,19 @@ Tu 34/22 P90 R0.85 S11 SW25
 We 30/19 P70 R0.30 S5 W18
 ```
 
-`brief` applies only to the reply to the request. Daily forecasts and tracker
-notifications use the full format.
+### Brief tracker messages
+
+A tracker created by a request with `brief` sends every message in the brief
+format. The header still has the tracker's name, `(1/1) Mt Hood`: brief
+avalanche lines have no zone name, so with several trackers the header is the
+only thing that says which one a message is about.
+
+| Kind | Brief body |
+|---|---|
+| Daily forecast | The avalanche line, alerts, then today and the next 2 days. One message unless its alerts need more, filled the same way as a brief reply |
+| Alert notification | The new alerts as brief alert lines, such as `!Sev Winter Storm Warning til We7 6PM`. Every new alert is sent, continuing in more messages and responses as in the full format |
+| Avalanche notification | `AV4 High` for a new forecast, `AV no rating`, `AV off season` for an off season loss, `AV no forecast` for any other loss, and `AV no forecast` then `AV may be old` for a loss to out of date data |
+| Tracker ended | `Tracking ended`, the same as the full format |
 
 ### Brief times
 
@@ -380,7 +405,7 @@ The same local time as the full format, written shorter:
 
 | Line | Example | Meaning |
 |---|---|---|
-| No tracker notice | `!no tracker` | The full format's `Could not create tracker` notice, matching `tracker_notice` in `src/sms.rs` |
+| No tracker notice | `!no tracker` | The full format's `Could not create tracker` notice, matching `TrackerStatus::NotCreated` in `src/sms.rs` |
 | Avalanche | `AV3 Considerable` | `AV`, the danger level, and the danger rating |
 | Avalanche no rating | `AV no rating` | The full format's `Avy: no danger rating`, for danger level -1 |
 | Avalanche notice | `AV no forecast`, `AV off season`, `AV unavailable`, `AV may be old` | The same notices as the full format |
@@ -407,7 +432,7 @@ The tokens follow the full format's sentence order:
 5. **`S11`**: total snowfall, inches. 1 decimal under 1 inch, whole inches
    above. Left out when it is zero.
 6. **Wind**: the compass direction at the time of the highest sustained wind,
-   then that speed in mph, such as `SW25`. Always present.
+   then that speed in mph, such as `SW25`. Always present, `--` with no data.
 
 The values are the same as the matching full format sentences.
 
@@ -502,7 +527,8 @@ Tu 34/22 P90 R0.85 S11 SW25
 We 30/19 P70 R0.30 S5 W18
 ```
 
-A daily forecast from a tracker named `Camp`:
+A daily forecast from a tracker named `Camp`, then the same daily forecast
+from a tracker created with `brief`:
 
 ```
 (1/2) Camp
@@ -513,6 +539,13 @@ Wed: high 72F, low 49F. Precip 0%. Wind N 6mph
 ```
 (2/2) Camp
 Thu: high 64F, low 50F. Precip 60%, 0.20in. Wind S 12mph
+```
+
+```
+(1/1) Camp
+Tu 68/47 P10 NW8
+We 72/49 P0 N6
+Th 64/50 P60 R0.20 S12
 ```
 
 Notifications from a tracker named `Mt Hood`:
@@ -526,6 +559,19 @@ Notifications from a tracker named `Mt Hood`:
 ```
 (1/1) Mt Hood
 Avy danger 4 High, Mt Hood
+```
+
+The same notifications from a tracker created with `brief`:
+
+```
+(1/1) Mt Hood
+!Sev Red Flag Warning til Th8 8PM
+!Mod Wind Advisory til We7 11AM
+```
+
+```
+(1/1) Mt Hood
+AV4 High
 ```
 
 ```
