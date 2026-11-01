@@ -306,7 +306,10 @@ pub struct Elevation {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IntVec {
-    pub uom: String,
+    // the unit code, such as "wmoUnit:percent". NWS leaves it out for
+    // some series, such as heatRisk and pressure
+    #[serde(default)]
+    pub uom: Option<String>,
     pub values: Vec<TimeInt>,
 }
 
@@ -320,7 +323,9 @@ pub struct TimeInt {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FloatVec {
-    pub uom: String,
+    // the unit code, such as "wmoUnit:degC". NWS leaves it out for some series
+    #[serde(default)]
+    pub uom: Option<String>,
     pub values: Vec<TimeFloat>,
 }
 

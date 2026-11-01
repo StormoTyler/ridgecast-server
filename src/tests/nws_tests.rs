@@ -1,10 +1,11 @@
-// tests for nws::sort_alerts and nws::check_alerts against a saved /alerts/active response
+// tests for nws::sort_alerts and nws::check_alerts against a saved /alerts/active response,
+// and for reading a saved /gridpoints response
 use std::collections::HashSet;
 
 use crate::handlers::nws;
 use crate::models::{
-    Alert, Alerts, AlertsSorted, Geocode, GeometryErrorReason, GeometryTypes, InvalidAlert,
-    InvalidAlertReason, Nwr, Point, PointGeometry, PointProperties, RawFeatures,
+    Alert, Alerts, AlertsSorted, Forecast, Geocode, GeometryErrorReason, GeometryTypes,
+    InvalidAlert, InvalidAlertReason, Nwr, Point, PointGeometry, PointProperties, RawFeatures,
 };
 
 const TEST_DATA: &str = include_str!("test_data/nws_alerts_test_data");
@@ -535,4 +536,21 @@ fn sort_alerts_does_not_panic_on_malformed_geometry() {
         vec!["malformed"]
     );
     assert!(alerts.with_geometry.is_empty());
+}
+
+// a model change that a real response doesn't match, such as a required field
+// NWS leaves out, would otherwise only fail at runtime, for every forecast
+#[test]
+fn gridpoints_test_data_deserializes() {
+    let forecast: Forecast =
+        serde_json::from_str(include_str!("test_data/nws_gridpoints_test_data"))
+            .expect("the saved gridpoints response should deserialize into Forecast");
+    let properties = forecast.properties;
+    assert_eq!(properties.temperature.uom.as_deref(), Some("wmoUnit:degC"));
+    // NWS sends heatRisk and pressure without a unit code
+    assert_eq!(
+        properties.heat_risk.expect("test data has heatRisk").uom,
+        None
+    );
+    assert_eq!(properties.pressure.uom, None);
 }
