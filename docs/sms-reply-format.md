@@ -249,7 +249,9 @@ colon, followed by sentences in the order of the table below. A sentence is
 left out when its optional flag was not set, or when the table says it is
 left out. An optional field that was requested but has no data says `N/A`,
 such as `Pressure N/A`, so the user knows it was checked. A base field with no
-data is left out. A series in a unit the server can't convert counts as no
+data is left out, unless its sentence has another value to show: then the
+missing value says `N/A` and the rest is shown, such as `Wind N/A, gusts 45`
+or `Precip N/A, 0.20in`. A series in a unit the server can't convert counts as no
 data, so a value is never shown in the wrong unit.
 
 | Sentence | Field | Flag | Value |
@@ -258,12 +260,12 @@ data, so a value is never shown in the wrong unit.
 | `Wet bulb globe 85F` | `wet_bulb_globe_temperature` | `wet_bulb_globe_temperature` | Highest wet bulb globe temperature |
 | `Heat risk 2 of 4` | `heat_risk` | `heat_risk` | Highest NWS HeatRisk category, 0 to 4 |
 | `Humidity 30-80%` | `relative_humidity` | `relative_humidity` | Lowest-highest relative humidity |
-| `Precip 90%, 0.85in` | `probability_of_precipitation`, `quantitative_precipitation` | base | Highest chance of precipitation, always included, even at `Precip 0%`, since users expect it in a weather forecast. Then total precipitation as liquid in inches with 2 decimals, left out when it is zero |
+| `Precip 90%, 0.85in` | `probability_of_precipitation`, `quantitative_precipitation` | base | Highest chance of precipitation, always included, even at `Precip 0%`, since users expect it in a weather forecast. Then total precipitation as liquid in inches with 2 decimals, left out when it is zero. Left out with no data. An amount without a chance is `Precip N/A, 0.20in` |
 | `Snow 11in` | `snowfall_amount` | base | Total snowfall in inches. 1 decimal under 1 inch, the nearest half inch under 4 inches (`Snow 2.5in`), whole inches from 4. Left out when it rounds to zero |
 | `Snow level 4500ft` | `snow_level` | `snow_level` | Lowest snow level in feet, rounded to 100 |
 | `Elevation 5240ft` | point elevation | `elevation` | The elevation of the forecast location in feet. Only in the first forecast day of a reply or daily forecast, since it is the same every day |
 | `Ice 0.10in` | `ice_accumulation` | base | Total ice in inches, 2 decimals. Left out when it is zero |
-| `Wind SW 25mph, gusts 45` | `wind_direction`, `wind_speed`, `wind_gust` | base, gusts with `wind_gust` | 8-point compass direction (`N`, `NE`, `E`, `SE`, `S`, `SW`, `W`, `NW`) at the time of the highest sustained wind, that speed, and the highest gust, in mph |
+| `Wind SW 25mph, gusts 45` | `wind_direction`, `wind_speed`, `wind_gust` | base, gusts with `wind_gust` | 8-point compass direction (`N`, `NE`, `E`, `SE`, `S`, `SW`, `W`, `NW`) at the time of the highest sustained wind, that speed, and the highest gust, in mph. With no wind data, `Wind N/A, gusts 45` when gusts were requested (`Wind N/A, gusts N/A` with no gust data either), and left out otherwise |
 | `Visibility 0.5mi` | `visibility` | `visibility` | Lowest visibility in miles, 1 decimal under 1 mile and the nearest half mile above. `Visibility 10mi` when it is 10 miles or more, the most NWS reports |
 | `Pressure 29.85inHg` | `pressure` | `pressure` | Lowest pressure in inches of mercury, 2 decimals. NWS sends pressure without a unit code, so it is read as pascals |
 | `Cloud ceiling 1200ft` | `ceiling_height` | `ceiling_height` | Lowest cloud ceiling in feet. `Cloud ceiling N/A` when there is no ceiling |
@@ -442,7 +444,7 @@ data is its label then `--`, such as `H--`, matching the full format's `N/A`.
 | `WB85` | `Wet bulb globe 85F` | With `wet_bulb_globe_temperature` |
 | `HR2` | `Heat risk 2 of 4` | With `heat_risk` |
 | `H30-80` | `Humidity 30-80%` | With `relative_humidity`. `H80` when the lowest and highest are the same |
-| `P90` | `Precip 90%` | Always, even at `P0`, as in the full format |
+| `P90` | `Precip 90%` | Always, even at `P0`, as in the full format. Left out with no data, as in the full format. `P--` before an amount without a chance: `P-- R0.20` |
 | `R0.85` | the precipitation amount, `0.85in` | Left out when it is zero |
 | `S11` | `Snow 11in` | Left out when it rounds to zero. Rounded as in the full format: `S0.5`, `S2.5`, `S11` |
 | `SL4500` | `Snow level 4500ft` | With `snow_level` |
