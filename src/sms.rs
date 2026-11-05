@@ -280,6 +280,8 @@ pub struct RequestedForecast {
     pub wind_gust: Option<FloatVec>,
 }
 
+// the notices record what happened, sms_reply picks their wording for the
+// full or brief format
 #[derive(Debug, Serialize)]
 pub struct SmsForecastResponse {
     pub point: Point,
@@ -288,29 +290,50 @@ pub struct SmsForecastResponse {
     pub alerts: Vec<Alert>,
     // set when no alerts could be loaded, so alerts is empty because they
     // weren't checked, not because there are none
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub alerts_notice: Option<&'static str>,
+    pub alerts_notice: bool,
     // set when the alerts are older than snapshots::ALERTS_MAX_AGE because
     // they could not be refreshed from NWS
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub alerts_stale_notice: Option<&'static str>,
+    pub alerts_stale_notice: bool,
     // the avalanche zone containing the point, None outside every zone.
     // without track_avy it is only included at danger level 3 or higher
     pub avy: Option<AvyProperties>,
     // explains a missing avy for a track_avy request whose forecast could not be given,
     // or for any request whose avalanche data could not be read
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub avy_notice: Option<&'static str>,
+    pub avy_notice: Option<AvyNotice>,
     // set when the avalanche data is older than snapshots::AVY_MAX_AGE because
     // it could not be refreshed from NAC
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub avy_stale_notice: Option<&'static str>,
-    // explains why a daily_forecast request did not get a daily forecast tracker
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub daily_notice: Option<&'static str>,
-    // set when the request asked for a tracker but it could not be saved, even after a retry
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tracker_notice: Option<&'static str>,
+    pub avy_stale_notice: bool,
+    // set when a daily_forecast request did not get a daily forecast tracker
+    pub daily_notice: bool,
+    // None when the request asked for no tracker
+    pub tracker: Option<TrackerStatus>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub enum AvyNotice {
+    // the zone has no valid forecast
+    NoCurrentForecast,
+    // the zone's center is in its off season
+    OffSeason,
+    // the avalanche data could not be read
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub enum TrackerStatus {
+    Created(CreatedTracker),
+    // the tracker could not be saved, even after a retry
+    NotCreated,
+}
+
+// what the reply's tracker line tells the user
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CreatedTracker {
+    pub name: String,
+    pub alerts: bool,
+    pub avy: bool,
+    pub daily_forecast: bool,
+    pub ends: DateTime<Utc>,
 }
 
 impl RequestedForecast {
@@ -426,16 +449,16 @@ pub async fn get_requested_forecast(
     // alerts that can't be loaded don't fail the request, the forecast is still sent.
     // the user is told the alerts couldn't be checked, so no alert lines
     // aren't read as no active alerts
-    let mut alerts_notice = None;
-    let mut alerts_stale_notice = None;
+    let mut alerts_notice = false;
+    let mut alerts_stale_notice = false;
     let alerts = match snapshots::load_alerts(db).await {
         Ok(Snapshot { data, stale }) => {
-            alerts_stale_notice = stale.then_some("Alerts may be out of date.");
+            alerts_stale_notice = stale;
             data
         }
         Err(e) => {
             eprintln!("get_requested_forecast: alerts unavailable: {e}");
-            alerts_notice = Some("Alerts could not be checked.");
+            alerts_notice = true;
             // matches no point, so active_alerts is empty
             AlertsSorted::default()
         }
@@ -471,7 +494,7 @@ pub async fn get_requested_forecast(
 
     let now = chrono::Utc::now();
     let mut avy_notice = None;
-    let mut avy_stale_notice = None;
+    let mut avy_stale_notice = false;
     let track_avy = forecast_vars.track_avy;
     // the user may not have asked about avalanches, so unavailable avalanche
     // data should not fail the rest of the request
@@ -479,9 +502,7 @@ pub async fn get_requested_forecast(
         Ok(Snapshot { data, stale }) => {
             // sent with or without track_avy, since stale data could miss
             // a danger level of 3 or higher
-            if stale {
-                avy_stale_notice = Some("Avalanche data may be out of date.");
-            }
+            avy_stale_notice = stale;
             Some(data)
         }
         Err(e) => {
@@ -493,7 +514,7 @@ pub async fn get_requested_forecast(
         // the notice is sent with or without track_avy, since
         // danger level 3 or higher could not be ruled out
         None => {
-            avy_notice = Some("Could not retrieve avalanche forecast data at this time.");
+            avy_notice = Some(AvyNotice::Unavailable);
             None
         }
         Some(avy_data) if track_avy => match nac::check_avy_geometry(&point, avy_data, now).await {
@@ -502,13 +523,13 @@ pub async fn get_requested_forecast(
             // the zone is still tracked with no stored forecast,
             // so its next forecast is reported as new
             nac::ZoneForecast::NoForecast | nac::ZoneForecast::Expired => {
-                avy_notice = Some("There is no current avalanche forecast for this location.");
+                avy_notice = Some(AvyNotice::NoCurrentForecast);
                 None
             }
             // the zone is still tracked, so the first forecast
             // after its season starts is reported as new
             nac::ZoneForecast::OffSeason => {
-                avy_notice = Some("The avalanche center for this location is in its off season.");
+                avy_notice = Some(AvyNotice::OffSeason);
                 None
             }
         },
@@ -517,7 +538,7 @@ pub async fn get_requested_forecast(
 
     let time_added = now;
     let expires = time_added + chrono::Duration::hours((*tracker_duration).into());
-    let mut daily_notice = None;
+    let mut daily_notice = false;
     // the first daily forecast, None when the request has no daily forecast
     let next_daily_forecast = if forecast_vars.daily_forecast {
         match daily_forecast::point_time_zone(&point) {
@@ -529,7 +550,7 @@ pub async fn get_requested_forecast(
                     "get_requested_forecast: no usable time zone for {lat},{lon}: {:?}",
                     point.properties.time_zone
                 );
-                daily_notice = Some("Daily forecasts are not available for this location.");
+                daily_notice = true;
                 None
             }
         }
@@ -539,7 +560,7 @@ pub async fn get_requested_forecast(
     // a tracker that would never send a daily forecast does not track it
     let daily_forecast = next_daily_forecast.is_some();
 
-    let mut tracker_notice = None;
+    let mut tracker = None;
     if forecast_vars.track_alerts || track_avy || daily_forecast {
         // one tracker covers every option, its forecast_vars record which are on
         let user_point = UserPoint {
@@ -563,15 +584,27 @@ pub async fn get_requested_forecast(
         // the forecast is the safety information, so it is sent even if the
         // tracker can't be saved. the save is retried once, then the user is told
         let name = tracker_name.as_deref().unwrap_or("without name");
-        if let Err(e) = database::add_tracker(&user_point, db).await {
+        let mut saved = database::add_tracker(&user_point, db).await;
+        if let Err(e) = &saved {
             eprintln!("get_requested_forecast: failed to save tracker {name}, retrying once: {e}");
-            if let Err(e) = database::add_tracker(&user_point, db).await {
+            saved = database::add_tracker(&user_point, db).await;
+        }
+        tracker = Some(match saved {
+            Ok(()) => TrackerStatus::Created(CreatedTracker {
+                // a request that creates a tracker always has a name
+                name: tracker_name.clone().unwrap_or_default(),
+                alerts: forecast_vars.track_alerts,
+                avy: track_avy,
+                daily_forecast,
+                ends: expires,
+            }),
+            Err(e) => {
                 eprintln!(
                     "get_requested_forecast: retry failed, tracker {name} was not created: {e}"
                 );
-                tracker_notice = Some("Could not create tracker.");
+                TrackerStatus::NotCreated
             }
-        }
+        });
     }
 
     Ok(SmsForecastResponse {
@@ -584,7 +617,7 @@ pub async fn get_requested_forecast(
         avy_notice,
         avy_stale_notice,
         daily_notice,
-        tracker_notice,
+        tracker,
     })
 }
 
