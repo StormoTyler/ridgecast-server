@@ -1,4 +1,4 @@
-// geometry helpers shared by the NWS and NAC handlers
+// geometry helpers shared by the upstream NWS and NAC modules
 
 use geojson::GeometryValue;
 use std::fmt;

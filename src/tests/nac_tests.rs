@@ -1,12 +1,12 @@
 // tests for nac::check_avy_geometry and nac::check_avy_tracker against a saved NAC map-layer response
 use chrono::{DateTime, TimeZone, Utc};
 
-use crate::handlers::nac;
 use crate::models::{
     AvalancheData, AvyArea, AvyProperties, DateTimeTypes, ForecastVars, GeometryErrorReason,
     GeometryTypes, InvalidAvyArea, Nwr, Point, PointGeometry, PointProperties, RawFeatures,
     Snapshot, UserPoint,
 };
+use crate::upstream::nac;
 
 const TEST_DATA: &str = include_str!("test_data/nac_test_data.json");
 

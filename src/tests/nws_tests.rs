@@ -2,11 +2,11 @@
 // and for reading a saved /gridpoints response
 use std::collections::HashSet;
 
-use crate::handlers::nws;
 use crate::models::{
     Alert, Alerts, AlertsSorted, Forecast, Geocode, GeometryErrorReason, GeometryTypes,
     InvalidAlert, InvalidAlertReason, Nwr, Point, PointGeometry, PointProperties, RawFeatures,
 };
+use crate::upstream::nws;
 
 const TEST_DATA: &str = include_str!("test_data/nws_alerts_test_data");
 

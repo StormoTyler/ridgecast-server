@@ -10,11 +10,11 @@ use serde::Serialize;
 // local modules
 use crate::database;
 use crate::errors;
-use crate::handlers::{nac, nws};
 use crate::models::{
     AlertsSorted, AvalancheData, InvalidAlert, InvalidAvyArea, SKIPPED_FEATURES_FAIL_PERCENT,
     SkippedFeatures, Snapshot,
 };
+use crate::upstream::{nac, nws};
 
 // NWS updates alerts continuously
 pub const ALERTS_MAX_AGE: TimeDelta = TimeDelta::minutes(15);

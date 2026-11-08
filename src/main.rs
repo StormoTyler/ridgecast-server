@@ -11,8 +11,8 @@ use serde_json::json;
 use std::time::Duration;
 
 // local modules
-mod handlers;
-use crate::handlers::nws;
+mod upstream;
+use crate::upstream::nws;
 mod database;
 mod errors;
 use crate::models::Snapshot;

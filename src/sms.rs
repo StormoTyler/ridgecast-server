@@ -12,12 +12,12 @@ use serde::Serialize;
 use crate::daily_forecast;
 use crate::database;
 use crate::errors;
-use crate::handlers::{nac, nws};
 use crate::models::{
     Alert, AlertsSorted, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
     ForecastResponse, ForecastVars, IntVec, Point, Properties, Snapshot, UserPoint,
 };
 use crate::snapshots;
+use crate::upstream::{nac, nws};
 
 const SUPPORTED_VERSION: &str = "1";
 // one week
