@@ -779,6 +779,55 @@ fn square() -> serde_json::Value {
     serde_json::json!([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]])
 }
 
+// every zone in the saved response deserializes, so a model change a real NAC
+// response doesn't match fails here instead of quietly skipping zones. every
+// AvyProperties field is an Option, so a renamed or mistyped field would read
+// as None rather than fail: each field is also compared with the raw JSON
+#[test]
+fn nac_test_data_deserializes() {
+    let raw: RawFeatures =
+        serde_json::from_str(TEST_DATA).expect("test data should be a geojson feature collection");
+    let (zones, skipped): (Vec<AvyArea>, _) = raw.parse("NAC test data");
+    assert!(
+        skipped.features.is_empty(),
+        "every zone should deserialize: {:?}",
+        skipped
+            .features
+            .iter()
+            .map(|feature| &feature.error)
+            .collect::<Vec<_>>()
+    );
+    assert!(skipped.total > 0, "test data should have zones");
+    assert_eq!(zones.len(), skipped.total);
+
+    let json: serde_json::Value = serde_json::from_str(TEST_DATA).unwrap();
+    let features = json["features"].as_array().unwrap();
+    for (zone, feature) in zones.iter().zip(features) {
+        let props = &zone.properties;
+        let raw = &feature["properties"];
+        for (field, parsed) in [
+            ("name", props.name.is_some()),
+            ("center", props.center.is_some()),
+            ("center_link", props.center_link.is_some()),
+            ("off_season", props.off_season.is_some()),
+            ("travel_advice", props.travel_advice.is_some()),
+            ("danger", props.danger.is_some()),
+            ("danger_level", props.danger_level.is_some()),
+            ("link", props.link.is_some()),
+            ("timezone", props.timezone.is_some()),
+            ("start_date", props.start_date.is_some()),
+            ("end_date", props.end_date.is_some()),
+        ] {
+            assert_eq!(
+                parsed,
+                !raw[field].is_null(),
+                "{field} of {:?} should be read when the response has it",
+                props.name
+            );
+        }
+    }
+}
+
 #[test]
 fn test_build_avy_map_test_data_has_no_invalid_zones() {
     let raw: RawFeatures =
