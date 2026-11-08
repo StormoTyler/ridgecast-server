@@ -123,6 +123,9 @@ pub trait MessageSender: Send + Sync {
     // from is one of the server's numbers: the one the user texted, so the reply
     // stays in the same conversation. a satellite messenger's gateway may not
     // deliver a reply from a different number
+    // an adapter makes one attempt per call and doesn't retry: the core retries
+    // a SendError::Transient itself (sms::outbound), so retries
+    // in an adapter would multiply them
     async fn send(
         &self,
         from: &PhoneNumber,

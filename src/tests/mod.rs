@@ -1,8 +1,11 @@
 mod daily_forecast_tests;
+mod fake_sender;
+mod inbound_tests;
 mod messaging_tests;
 mod models_tests;
 mod nac_tests;
 mod nws_tests;
+mod outbound_tests;
 mod sms_reply_tests;
 mod sms_tests;
 mod snapshots_tests;
