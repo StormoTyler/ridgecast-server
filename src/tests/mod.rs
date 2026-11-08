@@ -5,4 +5,5 @@ mod nws_tests;
 mod sms_reply_tests;
 mod sms_tests;
 mod snapshots_tests;
+mod state_tests;
 mod tracking_tests;

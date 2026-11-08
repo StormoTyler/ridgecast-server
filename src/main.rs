@@ -30,6 +30,7 @@ mod sms;
 #[allow(dead_code)]
 mod sms_reply;
 mod snapshots;
+mod state;
 #[cfg(test)]
 mod tests;
 mod tracking;
@@ -45,6 +46,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for name in ["RIDGECAST_USER_AGENT", "DATABASE_URL", "RIDGECAST_DB"] {
         std::env::var(name).map_err(|_| format!("{name} must be set"))?;
     }
+
+    // read before connecting to MongoDB, so a missing or invalid number stops the server at
+    // once. a string like the checks above, so the message is printed rather than the variant
+    let numbers = state::Numbers::from_env().map_err(|e| e.to_string())?;
 
     let db = database::DB::init().await?;
 
@@ -72,11 +77,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 5001));
     println!("Listening on: {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app(db)).await?;
+    axum::serve(listener, app(state::AppState { db, numbers })).await?;
     Ok(())
 }
 
-fn app(db: database::DB) -> Router {
+fn app(state: state::AppState) -> Router {
     Router::new()
         .route("/", get(homepage))
         .route("/health", get(health))
@@ -86,7 +91,7 @@ fn app(db: database::DB) -> Router {
         .route("/check-alerts", get(check_alerts))
         .route("/get-avy", get(get_avy))
         .route("/check-avy", get(check_avy))
-        .with_state(db)
+        .with_state(state)
 }
 
 async fn homepage() {}
