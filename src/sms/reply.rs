@@ -11,7 +11,7 @@ use chrono_tz::Tz;
 use crate::daily_forecast;
 use crate::errors;
 use crate::models::{Alert, AvyProperties, FloatVec, ForecastProperties, IntVec};
-use crate::sms;
+use crate::sms::{forecast, request};
 
 // ---- message limits, line order, and alert severity ----
 
@@ -149,8 +149,8 @@ pub enum Part {
 // sent in order. more than one response is needed only when the lines that
 // are never dropped, such as alerts, don't fit in MAX_MESSAGES
 pub fn format_reply(
-    request: &sms::SmsRequest,
-    response: &sms::SmsForecastResponse,
+    request: &request::SmsRequest,
+    response: &forecast::SmsForecastResponse,
     now: DateTime<Utc>,
 ) -> Vec<Vec<String>> {
     // NWS reports a time zone for every point it covers, so UTC is only a fallback
@@ -195,7 +195,7 @@ pub fn format_reply(
             // the brief format has no tracker line, only the !no tracker notice
             ReplySection::Tracker => {
                 if format == Format::Full
-                    && let Some(sms::TrackerStatus::Created(tracker)) = &response.tracker
+                    && let Some(forecast::TrackerStatus::Created(tracker)) = &response.tracker
                 {
                     parts.push(Part::Line(tracker_line(tracker, tz)));
                 }
@@ -210,8 +210,8 @@ pub fn format_reply(
     add_headers(bodies, None)
 }
 
-fn notice_lines(response: &sms::SmsForecastResponse, format: Format) -> Vec<String> {
-    let tracker_failed = response.tracker == Some(sms::TrackerStatus::NotCreated);
+fn notice_lines(response: &forecast::SmsForecastResponse, format: Format) -> Vec<String> {
+    let tracker_failed = response.tracker == Some(forecast::TrackerStatus::NotCreated);
     let mut lines = Vec::new();
     match format {
         Format::Full => {
@@ -238,7 +238,7 @@ fn notice_lines(response: &sms::SmsForecastResponse, format: Format) -> Vec<Stri
 // out of date. empty when there is nothing to say about avalanches
 pub fn avalanche_lines(
     avy: Option<&AvyProperties>,
-    notice: Option<sms::AvyNotice>,
+    notice: Option<forecast::AvyNotice>,
     stale: bool,
     format: Format,
 ) -> Vec<String> {
@@ -263,12 +263,18 @@ pub fn avalanche_lines(
     } else if let Some(notice) = notice {
         lines.push(
             match (notice, format) {
-                (sms::AvyNotice::NoCurrentForecast, Format::Full) => "Avy: no current forecast",
-                (sms::AvyNotice::NoCurrentForecast, Format::Brief) => "AV no forecast",
-                (sms::AvyNotice::OffSeason, Format::Full) => "Avy: center is in its off season",
-                (sms::AvyNotice::OffSeason, Format::Brief) => "AV off season",
-                (sms::AvyNotice::Unavailable, Format::Full) => "Avy: data unavailable, try later",
-                (sms::AvyNotice::Unavailable, Format::Brief) => "AV unavailable",
+                (forecast::AvyNotice::NoCurrentForecast, Format::Full) => {
+                    "Avy: no current forecast"
+                }
+                (forecast::AvyNotice::NoCurrentForecast, Format::Brief) => "AV no forecast",
+                (forecast::AvyNotice::OffSeason, Format::Full) => {
+                    "Avy: center is in its off season"
+                }
+                (forecast::AvyNotice::OffSeason, Format::Brief) => "AV off season",
+                (forecast::AvyNotice::Unavailable, Format::Full) => {
+                    "Avy: data unavailable, try later"
+                }
+                (forecast::AvyNotice::Unavailable, Format::Brief) => "AV unavailable",
             }
             .to_string(),
         );
@@ -357,7 +363,7 @@ pub fn alert_line(alert: &Alert, tz: Tz, format: Format) -> String {
     line
 }
 
-fn tracker_line(tracker: &sms::CreatedTracker, tz: Tz) -> String {
+fn tracker_line(tracker: &forecast::CreatedTracker, tz: Tz) -> String {
     let tracked: Vec<&str> = [
         (tracker.alerts, "alerts"),
         (tracker.avy, "avy"),
@@ -423,7 +429,7 @@ fn day_name(day: Weekday, format: Format) -> &'static str {
 // the lines of each forecast day, starting with today in tz. a day with no
 // forecast data, such as one past the end of the NWS forecast, is left out
 pub fn forecast_days(
-    forecast: &sms::RequestedForecast,
+    forecast: &forecast::RequestedForecast,
     flags: &ForecastProperties,
     tz: Tz,
     now: DateTime<Utc>,
@@ -550,7 +556,7 @@ struct Series {
 }
 
 impl Series {
-    fn new(forecast: &sms::RequestedForecast) -> Self {
+    fn new(forecast: &forecast::RequestedForecast) -> Self {
         // floats and ints have the same body, but a closure can't be generic, and
         // FloatVec and IntVec are different types (f32 and i32 values), so each
         // needs its own. keep the two the same
@@ -1249,26 +1255,30 @@ pub fn add_headers(bodies: Vec<Vec<String>>, tracker_name: Option<&str>) -> Vec<
 
 // the reply to a request that could not be read, a single message. a message
 // that is not a request at all gets the help message
-pub fn format_parse_error(error: &sms::SmsParseError) -> String {
+pub fn format_parse_error(error: &request::SmsParseError) -> String {
     let line = match error {
-        sms::SmsParseError::NotARequest => {
+        request::SmsParseError::NotARequest => {
             "RidgeCast: send requests from the RidgeCast app. Typed format: RC1 lat lon flags \
              hours days name. Reply STOP to opt out."
                 .to_string()
         }
-        sms::SmsParseError::UnsupportedVersion(_) => "Update the RidgeCast app".to_string(),
-        sms::SmsParseError::WrongFieldCount(count) => format!("Expected 6 fields, found {count}"),
-        sms::SmsParseError::InvalidLatitude(value) => with_value("Bad latitude: ", value),
-        sms::SmsParseError::InvalidLongitude(value) => with_value("Bad longitude: ", value),
-        sms::SmsParseError::InvalidFlags(value) => with_value("Bad flags: ", value),
-        sms::SmsParseError::InvalidTrackerDuration(value) => {
+        request::SmsParseError::UnsupportedVersion(_) => "Update the RidgeCast app".to_string(),
+        request::SmsParseError::WrongFieldCount(count) => {
+            format!("Expected 6 fields, found {count}")
+        }
+        request::SmsParseError::InvalidLatitude(value) => with_value("Bad latitude: ", value),
+        request::SmsParseError::InvalidLongitude(value) => with_value("Bad longitude: ", value),
+        request::SmsParseError::InvalidFlags(value) => with_value("Bad flags: ", value),
+        request::SmsParseError::InvalidTrackerDuration(value) => {
             with_value("Bad tracker hours: ", value)
         }
-        sms::SmsParseError::InvalidForecastLength(value) => {
+        request::SmsParseError::InvalidForecastLength(value) => {
             with_value("Bad forecast days: ", value)
         }
-        sms::SmsParseError::MissingTrackerName => "Tracker name missing".to_string(),
-        sms::SmsParseError::InvalidTrackerName(value) => with_value("Bad tracker name: ", value),
+        request::SmsParseError::MissingTrackerName => "Tracker name missing".to_string(),
+        request::SmsParseError::InvalidTrackerName(value) => {
+            with_value("Bad tracker name: ", value)
+        }
     };
     single_message(line)
 }

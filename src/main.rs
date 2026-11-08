@@ -26,9 +26,6 @@ mod scheduler;
 // unused until an SMS route is added, remove the allow then
 #[allow(dead_code)]
 mod sms;
-// unused until an SMS route is added, remove the allow then
-#[allow(dead_code)]
-mod sms_reply;
 mod snapshots;
 mod state;
 #[cfg(test)]

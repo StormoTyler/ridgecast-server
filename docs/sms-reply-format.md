@@ -1,6 +1,6 @@
 # RidgeCast SMS reply format
 
-**Status: draft.** `src/sms_reply.rs` implements replies to requests, errors,
+**Status: draft.** `src/sms/reply.rs` implements replies to requests, errors,
 and the help message. Daily forecasts and tracker notifications aren't
 implemented yet, and no route sends replies yet.
 
@@ -132,7 +132,7 @@ not name the time zone.
 | Line | Meaning |
 |---|---|
 | `Daily forecast unavailable` | The request set `daily_forecast`, but no daily forecast tracker was created because NWS reported no time zone for the location |
-| `Could not create tracker` | The request asked for a tracker, but it could not be saved, even after one retry, matching `TrackerStatus::NotCreated` in `src/sms.rs`. No tracker messages will be sent, so the user should send the request again. It takes the place of the tracker line, at the top of the reply instead of the bottom |
+| `Could not create tracker` | The request asked for a tracker, but it could not be saved, even after one retry, matching `TrackerStatus::NotCreated` in `src/sms/forecast.rs`. No tracker messages will be sent, so the user should send the request again. It takes the place of the tracker line, at the top of the reply instead of the bottom |
 
 Notices are the first body lines, above the avalanche line.
 
@@ -154,14 +154,14 @@ Avy: center is in its off season
   forecast with danger level -1. NAC, and other services using its API, treat
   a -1 forecast as valid but without a rating.
 - When there is no valid forecast, or the data can't be used, the line is one
-  of these notices, matching `avy_notice` in `src/sms.rs`:
+  of these notices, matching `avy_notice` in `src/sms/forecast.rs`:
 
 | Line | Meaning |
 |---|---|
 | `Avy: no current forecast` | The zone has no valid avalanche forecast: none was published, it has no end time, its end time has passed, or its danger level is missing or neither 1 to 5 nor -1 (no rating). A forecast that has not started yet is valid |
 | `Avy: center is in its off season` | The zone's avalanche center is in its off season |
 | `Avy: data unavailable, try later` | Avalanche data could not be read |
-| `Avy: data may be out of date` | The stored avalanche data is more than 2 hours old and could not be refreshed from NAC, matching `avy_stale_notice` in `src/sms.rs` |
+| `Avy: data may be out of date` | The stored avalanche data is more than 2 hours old and could not be refreshed from NAC, matching `avy_stale_notice` in `src/sms/forecast.rs` |
 
 Without `track_avy`, the line is included only at danger level 3 or higher,
 as `get_requested_forecast` already does. The `Avy: data unavailable, try
@@ -224,7 +224,7 @@ else.
 
 Sent in place of the alert lines when no alerts could be read: NWS could not
 be reached and there are no stored alerts to fall back on, matching
-`alerts_notice` in `src/sms.rs`. The rest of the reply is sent as usual. It
+`alerts_notice` in `src/sms/forecast.rs`. The rest of the reply is sent as usual. It
 stays in the first message, so a reply without alert lines is never read as
 having no active alerts.
 
@@ -234,7 +234,7 @@ having no active alerts.
 
 Sent before the alert lines when the stored alerts are more than 15 minutes
 old and could not be refreshed from NWS, matching `alerts_stale_notice` in
-`src/sms.rs`. It is included even when there are no alert lines, since
+`src/sms/forecast.rs`. It is included even when there are no alert lines, since
 out-of-date alerts can miss a new alert. Coming before the alert lines keeps
 it in the first message, however many alerts follow.
 
@@ -416,7 +416,7 @@ The same local time as the full format, written shorter:
 
 | Line | Example | Meaning |
 |---|---|---|
-| No tracker notice | `!no tracker` | The full format's `Could not create tracker` notice, matching `TrackerStatus::NotCreated` in `src/sms.rs` |
+| No tracker notice | `!no tracker` | The full format's `Could not create tracker` notice, matching `TrackerStatus::NotCreated` in `src/sms/forecast.rs` |
 | Avalanche | `AV3 Considerable` | `AV`, the danger level, and the danger rating |
 | Avalanche no rating | `AV no rating` | The full format's `Avy: no danger rating`, for danger level -1 |
 | Avalanche notice | `AV no forecast`, `AV off season`, `AV unavailable`, `AV may be old` | The same notices as the full format |

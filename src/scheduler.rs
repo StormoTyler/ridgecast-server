@@ -106,7 +106,7 @@ async fn check_tracker(user_point: UserPoint, alerts: )
 
     };
 
-    // in the future will make a call to a function in sms.rs
+    // in the future will make a call to a function in the sms module
     // to send a message to the user if there is a new daily forecast
     // new alerts or new avalanche forecast
     // provide logic to check this, but do not call any function

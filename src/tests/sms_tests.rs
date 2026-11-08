@@ -1,10 +1,10 @@
-// tests for the SMS request parser in src/sms.rs
+// tests for the SMS request parser in src/sms/request.rs and the forecast trimming in src/sms/forecast.rs
 use crate::models::ForecastVars;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 
 use crate::models::{FloatVec, IntVec, TimeFloat, TimeInt};
-use crate::sms;
+use crate::sms::{forecast, request};
 
 // flags in bit order, written out from the table in docs/sms-format.md
 // so a change to the parser's mapping fails these tests
@@ -28,11 +28,11 @@ fn flags_in_bit_order(vars: &ForecastVars) -> [bool; 14] {
     ]
 }
 
-fn parse(message: &str) -> Result<sms::SmsRequest, sms::SmsParseError> {
+fn parse(message: &str) -> Result<request::SmsRequest, request::SmsParseError> {
     message.parse()
 }
 
-fn set_bits(request: &sms::SmsRequest) -> Vec<usize> {
+fn set_bits(request: &request::SmsRequest) -> Vec<usize> {
     flags_in_bit_order(&request.forecast_vars)
         .iter()
         .enumerate()
@@ -134,7 +134,7 @@ fn rejects_messages_that_are_not_requests() {
     ] {
         assert_eq!(
             parse(message).unwrap_err(),
-            sms::SmsParseError::NotARequest,
+            request::SmsParseError::NotARequest,
             "{message:?}"
         );
     }
@@ -144,16 +144,16 @@ fn rejects_messages_that_are_not_requests() {
 fn rejects_unsupported_versions() {
     assert_eq!(
         parse("RC2 44.0 -123.0 0000 0").unwrap_err(),
-        sms::SmsParseError::UnsupportedVersion("2".to_string())
+        request::SmsParseError::UnsupportedVersion("2".to_string())
     );
     // checked before the field count, since another version may have a different layout
     assert_eq!(
         parse("RC2 something else entirely here").unwrap_err(),
-        sms::SmsParseError::UnsupportedVersion("2".to_string())
+        request::SmsParseError::UnsupportedVersion("2".to_string())
     );
     assert_eq!(
         parse("RC01 44.0 -123.0 0000 0").unwrap_err(),
-        sms::SmsParseError::UnsupportedVersion("01".to_string())
+        request::SmsParseError::UnsupportedVersion("01".to_string())
     );
 }
 
@@ -161,25 +161,25 @@ fn rejects_unsupported_versions() {
 fn rejects_wrong_field_count() {
     assert_eq!(
         parse("RC1").unwrap_err(),
-        sms::SmsParseError::WrongFieldCount(1)
+        request::SmsParseError::WrongFieldCount(1)
     );
     assert_eq!(
         parse("RC1 44.0 -123.0").unwrap_err(),
-        sms::SmsParseError::WrongFieldCount(3)
+        request::SmsParseError::WrongFieldCount(3)
     );
     // the version 1 layout before tracker_duration was added
     assert_eq!(
         parse("RC1 44.0 -123.0 000").unwrap_err(),
-        sms::SmsParseError::WrongFieldCount(4)
+        request::SmsParseError::WrongFieldCount(4)
     );
     // a request without a tracker flag has no tracker name
     assert_eq!(
         parse("RC1 44.0 -123.0 0000 0 3 extra").unwrap_err(),
-        sms::SmsParseError::WrongFieldCount(7)
+        request::SmsParseError::WrongFieldCount(7)
     );
     assert_eq!(
         parse("RC1 44.0 -123.0 0002 0 3 Mt Hood").unwrap_err(),
-        sms::SmsParseError::WrongFieldCount(8)
+        request::SmsParseError::WrongFieldCount(8)
     );
 }
 
@@ -192,7 +192,7 @@ fn rejects_invalid_latitude() {
         let message = format!("RC1 {lat} -123.0 0000 0 1");
         assert_eq!(
             parse(&message).unwrap_err(),
-            sms::SmsParseError::InvalidLatitude(lat.to_string()),
+            request::SmsParseError::InvalidLatitude(lat.to_string()),
             "{message}"
         );
     }
@@ -212,7 +212,7 @@ fn rejects_invalid_longitude() {
         let message = format!("RC1 44.0 {lon} 0000 0 1");
         assert_eq!(
             parse(&message).unwrap_err(),
-            sms::SmsParseError::InvalidLongitude(lon.to_string()),
+            request::SmsParseError::InvalidLongitude(lon.to_string()),
             "{message}"
         );
     }
@@ -237,12 +237,12 @@ fn rejects_invalid_flags() {
         let message = format!("RC1 44.0 -123.0 {flags} 0 1");
         match parse(&message) {
             // "08 45" splits into two fields, so only "08" is read as the flags
-            Err(sms::SmsParseError::InvalidFlags(read)) if flags.contains(' ') => {
+            Err(request::SmsParseError::InvalidFlags(read)) if flags.contains(' ') => {
                 assert_eq!(read, "08")
             }
             result => assert_eq!(
                 result.unwrap_err(),
-                sms::SmsParseError::InvalidFlags(flags.to_string()),
+                request::SmsParseError::InvalidFlags(flags.to_string()),
                 "{message}"
             ),
         }
@@ -274,7 +274,7 @@ fn rejects_invalid_tracker_duration() {
         let message = format!("RC1 44.0 -123.0 0001 {duration} 1 Camp");
         assert_eq!(
             parse(&message).unwrap_err(),
-            sms::SmsParseError::InvalidTrackerDuration(duration.to_string()),
+            request::SmsParseError::InvalidTrackerDuration(duration.to_string()),
             "{message}"
         );
     }
@@ -287,7 +287,7 @@ fn rejects_zero_duration_with_tracker() {
         let message = format!("RC1 44.0 -123.0 {flags} 0 1 Camp");
         assert_eq!(
             parse(&message).unwrap_err(),
-            sms::SmsParseError::InvalidTrackerDuration("0".to_string()),
+            request::SmsParseError::InvalidTrackerDuration("0".to_string()),
             "{message}"
         );
     }
@@ -297,7 +297,7 @@ fn rejects_zero_duration_with_tracker() {
 fn forecast_length_is_required() {
     assert_eq!(
         parse("RC1 44.0 -123.0 0000 0").unwrap_err(),
-        sms::SmsParseError::WrongFieldCount(5)
+        request::SmsParseError::WrongFieldCount(5)
     );
 }
 
@@ -322,7 +322,7 @@ fn rejects_invalid_forecast_length() {
         let message = format!("RC1 44.0 -123.0 0000 0 {length}");
         assert_eq!(
             parse(&message).unwrap_err(),
-            sms::SmsParseError::InvalidForecastLength(length.to_string()),
+            request::SmsParseError::InvalidForecastLength(length.to_string()),
             "{message}"
         );
     }
@@ -332,7 +332,7 @@ fn rejects_invalid_forecast_length() {
 fn forecast_length_is_checked_after_the_other_fields() {
     assert_eq!(
         parse("RC1 44.0 -123.0 0001 0 9").unwrap_err(),
-        sms::SmsParseError::InvalidTrackerDuration("0".to_string())
+        request::SmsParseError::InvalidTrackerDuration("0".to_string())
     );
 }
 
@@ -363,7 +363,7 @@ fn tracker_name_is_required_with_a_tracker() {
         let message = format!("RC1 44.0 -123.0 {flags} 24 1");
         assert_eq!(
             parse(&message).unwrap_err(),
-            sms::SmsParseError::MissingTrackerName,
+            request::SmsParseError::MissingTrackerName,
             "{message}"
         );
     }
@@ -388,7 +388,7 @@ fn rejects_invalid_tracker_name() {
         let message = format!("RC1 44.0 -123.0 0001 24 1 {name}");
         assert_eq!(
             parse(&message).unwrap_err(),
-            sms::SmsParseError::InvalidTrackerName(name.to_string()),
+            request::SmsParseError::InvalidTrackerName(name.to_string()),
             "{message}"
         );
     }
@@ -398,11 +398,11 @@ fn rejects_invalid_tracker_name() {
 fn tracker_name_is_checked_after_the_other_fields() {
     assert_eq!(
         parse("RC1 44.0 -123.0 0001 24 9 Camp").unwrap_err(),
-        sms::SmsParseError::InvalidForecastLength("9".to_string())
+        request::SmsParseError::InvalidForecastLength("9".to_string())
     );
     assert_eq!(
         parse("RC1 44.0 -123.0 0001 24 Mt Hood").unwrap_err(),
-        sms::SmsParseError::InvalidForecastLength("Mt".to_string())
+        request::SmsParseError::InvalidForecastLength("Mt".to_string())
     );
 }
 
@@ -416,12 +416,12 @@ fn utc(time: &str) -> DateTime<Utc> {
 fn one_day_ends_at_local_midnight() {
     // 10:00 AM PDT Oct 6 ends at midnight PDT starting Oct 7
     assert_eq!(
-        sms::forecast_end(&LOS_ANGELES, utc("2026-10-06T17:00:00Z"), 1),
+        forecast::forecast_end(&LOS_ANGELES, utc("2026-10-06T17:00:00Z"), 1),
         utc("2026-10-07T07:00:00Z")
     );
     // 8:00 PM PDT Oct 6 is already Oct 7 in UTC, but still Oct 6 locally
     assert_eq!(
-        sms::forecast_end(&LOS_ANGELES, utc("2026-10-07T03:00:00Z"), 1),
+        forecast::forecast_end(&LOS_ANGELES, utc("2026-10-07T03:00:00Z"), 1),
         utc("2026-10-07T07:00:00Z")
     );
 }
@@ -429,7 +429,7 @@ fn one_day_ends_at_local_midnight() {
 #[test]
 fn seven_days_end_at_local_midnight_after_the_seventh_day() {
     assert_eq!(
-        sms::forecast_end(&LOS_ANGELES, utc("2026-10-06T17:00:00Z"), 7),
+        forecast::forecast_end(&LOS_ANGELES, utc("2026-10-06T17:00:00Z"), 7),
         utc("2026-10-13T07:00:00Z")
     );
 }
@@ -438,7 +438,7 @@ fn seven_days_end_at_local_midnight_after_the_seventh_day() {
 fn forecast_end_follows_daylight_saving_end() {
     // Oct 31 PDT, 2 days later is midnight PST starting Nov 2, which is 08:00 UTC
     assert_eq!(
-        sms::forecast_end(&LOS_ANGELES, utc("2026-10-31T17:00:00Z"), 2),
+        forecast::forecast_end(&LOS_ANGELES, utc("2026-10-31T17:00:00Z"), 2),
         utc("2026-11-02T08:00:00Z")
     );
 }
@@ -446,7 +446,7 @@ fn forecast_end_follows_daylight_saving_end() {
 #[test]
 fn forecast_end_in_utc() {
     assert_eq!(
-        sms::forecast_end(&Utc, utc("2026-10-06T17:00:00Z"), 1),
+        forecast::forecast_end(&Utc, utc("2026-10-06T17:00:00Z"), 1),
         utc("2026-10-07T00:00:00Z")
     );
 }
@@ -474,7 +474,7 @@ fn trims_values_starting_at_or_after_the_end() {
         "2026-10-07T07:00:00+00:00/PT1H",
         "2026-10-08T07:00:00+00:00/PT1H",
     ]);
-    let kept: Vec<_> = sms::trim_floats(series, end)
+    let kept: Vec<_> = forecast::trim_floats(series, end)
         .values
         .into_iter()
         .map(|value| value.valid_time.unwrap())
@@ -493,7 +493,7 @@ fn trim_compares_times_with_offsets() {
     // 11:00 PM PDT Oct 6 is 06:00 UTC Oct 7, before the end
     let series = floats(&["2026-10-06T23:00:00-07:00/PT1H"]);
     assert_eq!(
-        sms::trim_floats(series, utc("2026-10-07T07:00:00Z"))
+        forecast::trim_floats(series, utc("2026-10-07T07:00:00Z"))
             .values
             .len(),
         1
@@ -519,7 +519,7 @@ fn trim_drops_values_without_a_readable_time() {
             },
         ],
     };
-    let kept: Vec<_> = sms::trim_ints(series, utc("2026-10-07T07:00:00Z"))
+    let kept: Vec<_> = forecast::trim_ints(series, utc("2026-10-07T07:00:00Z"))
         .values
         .into_iter()
         .map(|value| value.value)

@@ -1,4 +1,4 @@
-// tests for sms_reply against the format in docs/sms-reply-format.md
+// tests for sms::reply against the format in docs/sms-reply-format.md
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 
@@ -7,8 +7,7 @@ use crate::models::{
     Alert, AvyProperties, Elevation, FloatVec, ForecastProperties, ForecastVars, IntVec, Nwr,
     Point, PointGeometry, PointProperties, TimeFloat, TimeInt,
 };
-use crate::sms;
-use crate::sms_reply;
+use crate::sms::{forecast, reply, request};
 
 const TZ: Tz = chrono_tz::America::Los_Angeles;
 
@@ -48,8 +47,8 @@ fn ints(uom: Option<&str>, values: &[(&str, i32)]) -> IntVec {
 }
 
 // a forecast with no data, which tests fill in
-fn empty_forecast() -> sms::RequestedForecast {
-    sms::RequestedForecast {
+fn empty_forecast() -> forecast::RequestedForecast {
+    forecast::RequestedForecast {
         temperature: floats("wmoUnit:degC", &[]),
         max_temperature: floats("wmoUnit:degC", &[]),
         min_temperature: floats("wmoUnit:degC", &[]),
@@ -73,7 +72,7 @@ fn empty_forecast() -> sms::RequestedForecast {
 }
 
 // a light wind on Tuesday, so the day has data
-fn calm_tuesday() -> sms::RequestedForecast {
+fn calm_tuesday() -> forecast::RequestedForecast {
     let mut forecast = empty_forecast();
     forecast.wind_speed = floats(
         "wmoUnit:km_h-1",
@@ -84,20 +83,17 @@ fn calm_tuesday() -> sms::RequestedForecast {
 
 // the sentences of each forecast day, without the day names, in order
 fn day_sentences(
-    forecast: &sms::RequestedForecast,
+    forecast: &forecast::RequestedForecast,
     flags: &ForecastProperties,
     days: u32,
 ) -> Vec<Vec<String>> {
-    sms_reply::forecast_days(forecast, flags, TZ, now(), days, sms_reply::Format::Full)
+    reply::forecast_days(forecast, flags, TZ, now(), days, reply::Format::Full)
         .into_iter()
         .map(|lines| {
             lines
                 .iter()
                 .flat_map(|line| {
-                    assert!(
-                        line.len() <= sms_reply::BODY_LENGTH,
-                        "line too long: {line}"
-                    );
+                    assert!(line.len() <= reply::BODY_LENGTH, "line too long: {line}");
                     let (_, sentences) = line.split_once(": ").unwrap();
                     split_sentences(sentences)
                 })
@@ -191,8 +187,8 @@ fn point() -> Point {
 
 // a forecast-only request. it sets no tracker flag, so it has no tracker name
 // and a duration of 0, as docs/sms-format.md requires
-fn request(brief: bool, forecast_length: u32) -> sms::SmsRequest {
-    sms::SmsRequest {
+fn request(brief: bool, forecast_length: u32) -> request::SmsRequest {
+    request::SmsRequest {
         lat: 45.3735,
         lon: -121.6959,
         tracker_duration: 0,
@@ -207,7 +203,7 @@ fn request(brief: bool, forecast_length: u32) -> sms::SmsRequest {
 
 // a request that tracks alerts and avalanche danger for 72 hours as Mt Hood,
 // like the spec's examples but without their optional fields
-fn tracker_request(brief: bool, forecast_length: u32) -> sms::SmsRequest {
+fn tracker_request(brief: bool, forecast_length: u32) -> request::SmsRequest {
     let mut request = request(brief, forecast_length);
     request.tracker_duration = 72;
     request.tracker_name = Some("Mt Hood".to_string());
@@ -217,8 +213,8 @@ fn tracker_request(brief: bool, forecast_length: u32) -> sms::SmsRequest {
 }
 
 // the tracker that tracker_request creates, ending 72 hours after now()
-fn created_tracker(daily_forecast: bool) -> sms::TrackerStatus {
-    sms::TrackerStatus::Created(sms::CreatedTracker {
+fn created_tracker(daily_forecast: bool) -> forecast::TrackerStatus {
+    forecast::TrackerStatus::Created(forecast::CreatedTracker {
         name: "Mt Hood".to_string(),
         alerts: true,
         avy: true,
@@ -227,8 +223,8 @@ fn created_tracker(daily_forecast: bool) -> sms::TrackerStatus {
     })
 }
 
-fn response(forecast: Option<sms::RequestedForecast>) -> sms::SmsForecastResponse {
-    sms::SmsForecastResponse {
+fn response(forecast: Option<forecast::RequestedForecast>) -> forecast::SmsForecastResponse {
+    forecast::SmsForecastResponse {
         point: point(),
         forecast,
         alerts: Vec::new(),
@@ -243,11 +239,14 @@ fn response(forecast: Option<sms::RequestedForecast>) -> sms::SmsForecastRespons
 }
 
 // formats a reply and checks every message is within the length limit
-fn reply(request: &sms::SmsRequest, response: &sms::SmsForecastResponse) -> Vec<Vec<String>> {
-    let responses = sms_reply::format_reply(request, response, now());
+fn reply(
+    request: &request::SmsRequest,
+    response: &forecast::SmsForecastResponse,
+) -> Vec<Vec<String>> {
+    let responses = reply::format_reply(request, response, now());
     for message in responses.iter().flatten() {
         assert!(
-            message.len() <= sms_reply::MESSAGE_LENGTH,
+            message.len() <= reply::MESSAGE_LENGTH,
             "message too long: {message}"
         );
     }
@@ -259,26 +258,26 @@ fn body(message: &str) -> Vec<&str> {
     message.lines().skip(1).collect()
 }
 
-fn line(text: &str) -> sms_reply::Part {
-    sms_reply::Part::Line(text.to_string())
+fn line(text: &str) -> reply::Part {
+    reply::Part::Line(text.to_string())
 }
 
 #[test]
 fn reply_order_puts_notices_first_then_avalanche_and_alerts() {
     assert_eq!(
-        sms_reply::REPLY_ORDER,
+        reply::REPLY_ORDER,
         [
-            sms_reply::ReplySection::Notices,
-            sms_reply::ReplySection::Avalanche,
-            sms_reply::ReplySection::Alerts,
-            sms_reply::ReplySection::ForecastDays,
-            sms_reply::ReplySection::Tracker,
+            reply::ReplySection::Notices,
+            reply::ReplySection::Avalanche,
+            reply::ReplySection::Alerts,
+            reply::ReplySection::ForecastDays,
+            reply::ReplySection::Tracker,
         ]
     );
 }
 
 // every field on Tuesday, with the values in the spec's sentence table
-fn every_field_tuesday() -> sms::RequestedForecast {
+fn every_field_tuesday() -> forecast::RequestedForecast {
     let mut forecast = empty_forecast();
     forecast.max_temperature = floats(
         "wmoUnit:degC",
@@ -404,7 +403,7 @@ const TUESDAY: &str = "2026-10-06T16:00:00+00:00/PT1H";
 // a day with only optional fields counts as past the end of the forecast
 #[test]
 fn every_unit_code_converts_to_the_reply_unit() {
-    type Setup = fn(&mut sms::RequestedForecast, &mut ForecastProperties);
+    type Setup = fn(&mut forecast::RequestedForecast, &mut ForecastProperties);
     let cases: [(&str, Setup, &[&str]); 16] = [
         (
             "degC",
@@ -555,18 +554,11 @@ fn long_day_continues_on_a_line_starting_with_the_day_name() {
     let mut forecast = calm_tuesday();
     forecast.visibility = Some(floats("wmoUnit:m", &[]));
     forecast.pressure = Some(floats("wmoUnit:Pa", &[]));
-    let days = sms_reply::forecast_days(
-        &forecast,
-        &every_flag(),
-        TZ,
-        now(),
-        1,
-        sms_reply::Format::Full,
-    );
+    let days = reply::forecast_days(&forecast, &every_flag(), TZ, now(), 1, reply::Format::Full);
     assert!(days[0].len() > 1, "expected the day to need two lines");
     for line in &days[0] {
         assert!(line.starts_with("Tue: "));
-        assert!(line.len() <= sms_reply::BODY_LENGTH);
+        assert!(line.len() <= reply::BODY_LENGTH);
     }
 }
 
@@ -632,13 +624,13 @@ fn snow_has_tenths_under_an_inch_halves_under_four_and_whole_inches_above() {
     // the brief format rounds the same way
     let mut forecast = calm_tuesday();
     forecast.snowfall_amount = floats("wmoUnit:mm", &[(TUESDAY, 2.5 * 25.4)]);
-    let days = sms_reply::forecast_days(
+    let days = reply::forecast_days(
         &forecast,
         &ForecastProperties::default(),
         TZ,
         now(),
         1,
-        sms_reply::Format::Brief,
+        reply::Format::Brief,
     );
     assert_eq!(days, [["Tu --/-- S2.5 5"]]);
 }
@@ -699,7 +691,7 @@ fn a_missing_base_value_is_n_a_when_its_sentence_has_other_data() {
         day_sentences(&forecast, &gusts, 1),
         [["Precip 0%", "Wind N/A, gusts N/A"]]
     );
-    let days = sms_reply::forecast_days(&forecast, &gusts, TZ, now(), 1, sms_reply::Format::Brief);
+    let days = reply::forecast_days(&forecast, &gusts, TZ, now(), 1, reply::Format::Brief);
     assert_eq!(days, [["Tu --/-- P0 --G--"]]);
 
     // a precipitation amount without a chance
@@ -709,13 +701,13 @@ fn a_missing_base_value_is_n_a_when_its_sentence_has_other_data() {
         day_sentences(&forecast, &ForecastProperties::default(), 1),
         [["Precip N/A, 0.20in"]]
     );
-    let days = sms_reply::forecast_days(
+    let days = reply::forecast_days(
         &forecast,
         &ForecastProperties::default(),
         TZ,
         now(),
         1,
-        sms_reply::Format::Brief,
+        reply::Format::Brief,
     );
     assert_eq!(days, [["Tu --/-- P-- R0.20 --"]]);
 }
@@ -851,13 +843,13 @@ fn brief_day_follows_the_same_order() {
         Some("wmoUnit:degree_(angle)"),
         &[("2026-10-06T21:00:00+00:00/PT1H", 225)],
     );
-    let days = sms_reply::forecast_days(
+    let days = reply::forecast_days(
         &forecast,
         &ForecastProperties::default(),
         TZ,
         now(),
         1,
-        sms_reply::Format::Brief,
+        reply::Format::Brief,
     );
     assert_eq!(days, [["Tu 34/22 P90 R0.85 S11 SW25"]]);
 }
@@ -869,26 +861,26 @@ fn brief_day_has_p0_and_dashes_for_missing_temperatures() {
         Some("wmoUnit:percent"),
         &[("2026-10-06T07:00:00+00:00/P1D", 0)],
     );
-    let days = sms_reply::forecast_days(
+    let days = reply::forecast_days(
         &forecast,
         &ForecastProperties::default(),
         TZ,
         now(),
         1,
-        sms_reply::Format::Brief,
+        reply::Format::Brief,
     );
     assert_eq!(days, [["Tu --/-- P0 5"]]);
 }
 
 #[test]
 fn brief_day_has_a_token_for_every_requested_field() {
-    let days = sms_reply::forecast_days(
+    let days = reply::forecast_days(
         &every_field_tuesday(),
         &every_flag(),
         TZ,
         now(),
         1,
-        sms_reply::Format::Brief,
+        reply::Format::Brief,
     );
     assert_eq!(
         days,
@@ -902,13 +894,13 @@ fn brief_day_has_a_token_for_every_requested_field() {
 
 #[test]
 fn brief_requested_fields_without_a_value_are_dashes() {
-    let days = sms_reply::forecast_days(
+    let days = reply::forecast_days(
         &calm_tuesday(),
         &every_flag(),
         TZ,
         now(),
         1,
-        sms_reply::Format::Brief,
+        reply::Format::Brief,
     );
     assert_eq!(
         days,
@@ -928,7 +920,7 @@ fn brief_gusts_are_shown_without_wind_data() {
         wind_gust: true,
         ..ForecastProperties::default()
     };
-    let days = sms_reply::forecast_days(&forecast, &flags, TZ, now(), 1, sms_reply::Format::Brief);
+    let days = reply::forecast_days(&forecast, &flags, TZ, now(), 1, reply::Format::Brief);
     assert_eq!(days, [["Tu --/-- P0 --G45"]]);
 }
 
@@ -949,7 +941,7 @@ fn brief_elevation_is_only_in_the_first_day() {
         elevation: true,
         ..ForecastProperties::default()
     };
-    let days = sms_reply::forecast_days(&forecast, &flags, TZ, now(), 2, sms_reply::Format::Brief);
+    let days = reply::forecast_days(&forecast, &flags, TZ, now(), 2, reply::Format::Brief);
     assert_eq!(days, [["Tu --/-- EL5240 5"], ["We --/-- 5"]]);
 }
 
@@ -964,7 +956,7 @@ fn alerts_are_sorted_by_severity_with_unknown_after_severe() {
         alert("Tornado Warning", Some("Extreme"), None),
     ];
     assert_eq!(
-        sms_reply::alert_lines(&alerts, false, false, TZ, sms_reply::Format::Full),
+        reply::alert_lines(&alerts, false, false, TZ, reply::Format::Full),
         [
             "!Extreme: Tornado Warning",
             "!Severe: Flood Warning",
@@ -984,11 +976,11 @@ fn alert_line_ends_with_the_local_end_time() {
         Some("2026-10-08T01:00:00+00:00"),
     );
     assert_eq!(
-        sms_reply::alert_line(&warning, TZ, sms_reply::Format::Full),
+        reply::alert_line(&warning, TZ, reply::Format::Full),
         "!Severe: Winter Storm Warning until Wed 10/7 6PM"
     );
     assert_eq!(
-        sms_reply::alert_line(&warning, TZ, sms_reply::Format::Brief),
+        reply::alert_line(&warning, TZ, reply::Format::Brief),
         "!Sev Winter Storm Warning til We7 6PM"
     );
     let advisory = alert(
@@ -997,7 +989,7 @@ fn alert_line_ends_with_the_local_end_time() {
         Some("2026-10-07T17:30:00+00:00"),
     );
     assert_eq!(
-        sms_reply::alert_line(&advisory, TZ, sms_reply::Format::Full),
+        reply::alert_line(&advisory, TZ, reply::Format::Full),
         "!Moderate: Wind Advisory until Wed 10/7 10:30AM"
     );
 }
@@ -1006,47 +998,47 @@ fn alert_line_ends_with_the_local_end_time() {
 fn stale_alerts_notice_comes_before_the_alerts() {
     let alerts = [alert("Flood Warning", Some("Severe"), None)];
     assert_eq!(
-        sms_reply::alert_lines(&alerts, false, true, TZ, sms_reply::Format::Full),
+        reply::alert_lines(&alerts, false, true, TZ, reply::Format::Full),
         ["!Alerts may be out of date", "!Severe: Flood Warning"]
     );
     assert_eq!(
-        sms_reply::alert_lines(&[], true, false, TZ, sms_reply::Format::Brief),
+        reply::alert_lines(&[], true, false, TZ, reply::Format::Brief),
         ["!alerts not checked"]
     );
 }
 
 #[test]
 fn avalanche_lines_in_both_formats() {
-    let full = sms_reply::Format::Full;
-    let brief = sms_reply::Format::Brief;
+    let full = reply::Format::Full;
+    let brief = reply::Format::Brief;
     assert_eq!(
-        sms_reply::avalanche_lines(Some(&avy(3)), None, false, full),
+        reply::avalanche_lines(Some(&avy(3)), None, false, full),
         ["Avy danger 3 Considerable, Mt Hood"]
     );
     assert_eq!(
-        sms_reply::avalanche_lines(Some(&avy(3)), None, false, brief),
+        reply::avalanche_lines(Some(&avy(3)), None, false, brief),
         ["AV3 Considerable"]
     );
     assert_eq!(
-        sms_reply::avalanche_lines(Some(&avy(-1)), None, true, full),
+        reply::avalanche_lines(Some(&avy(-1)), None, true, full),
         [
             "Avy: no danger rating, Mt Hood",
             "Avy: data may be out of date"
         ]
     );
     assert_eq!(
-        sms_reply::avalanche_lines(Some(&avy(-1)), None, false, brief),
+        reply::avalanche_lines(Some(&avy(-1)), None, false, brief),
         ["AV no rating"]
     );
     assert_eq!(
-        sms_reply::avalanche_lines(None, Some(sms::AvyNotice::OffSeason), false, full),
+        reply::avalanche_lines(None, Some(forecast::AvyNotice::OffSeason), false, full),
         ["Avy: center is in its off season"]
     );
     assert_eq!(
-        sms_reply::avalanche_lines(None, Some(sms::AvyNotice::Unavailable), true, brief),
+        reply::avalanche_lines(None, Some(forecast::AvyNotice::Unavailable), true, brief),
         ["AV unavailable", "AV may be old"]
     );
-    assert!(sms_reply::avalanche_lines(None, None, false, full).is_empty());
+    assert!(reply::avalanche_lines(None, None, false, full).is_empty());
 }
 
 // the request also sets daily_forecast, but NWS reports no time zone for the
@@ -1086,7 +1078,7 @@ fn full_reply_lines_are_in_reply_order() {
 fn reply_with_a_failed_tracker_has_the_notice_at_the_top() {
     let mut response = response(Some(calm_tuesday()));
     response.avy = Some(avy(3));
-    response.tracker = Some(sms::TrackerStatus::NotCreated);
+    response.tracker = Some(forecast::TrackerStatus::NotCreated);
     let full = reply(&tracker_request(false, 1), &response);
     assert_eq!(
         body(&full[0][0]),
@@ -1105,8 +1097,8 @@ fn reply_with_a_failed_tracker_has_the_notice_at_the_top() {
 
 #[test]
 fn a_day_that_doesnt_fit_starts_a_new_message() {
-    let day = sms_reply::Part::Day(vec!["x".repeat(60), "y".repeat(40)]);
-    let bodies = sms_reply::pack_messages(&[line(&"a".repeat(50)), day]);
+    let day = reply::Part::Day(vec!["x".repeat(60), "y".repeat(40)]);
+    let bodies = reply::pack_messages(&[line(&"a".repeat(50)), day]);
     assert_eq!(bodies.len(), 2);
     assert_eq!(bodies[0], ["a".repeat(50)]);
     assert_eq!(bodies[1], ["x".repeat(60), "y".repeat(40)]);
@@ -1114,12 +1106,12 @@ fn a_day_that_doesnt_fit_starts_a_new_message() {
 
 #[test]
 fn days_are_dropped_from_the_last_to_stay_within_nine_messages() {
-    let mut parts: Vec<sms_reply::Part> = (0..12)
-        .map(|day| sms_reply::Part::Day(vec![format!("day {day} {}", "x".repeat(100))]))
+    let mut parts: Vec<reply::Part> = (0..12)
+        .map(|day| reply::Part::Day(vec![format!("day {day} {}", "x".repeat(100))]))
         .collect();
     parts.push(line("Tracking Mt Hood: alerts until Fri 10/9 10AM"));
-    let bodies = sms_reply::pack_within(parts, sms_reply::MAX_MESSAGES);
-    assert_eq!(bodies.len(), sms_reply::MAX_MESSAGES);
+    let bodies = reply::pack_within(parts, reply::MAX_MESSAGES);
+    assert_eq!(bodies.len(), reply::MAX_MESSAGES);
     assert!(bodies[0][0].starts_with("day 0 "));
     // the tracker line is never dropped
     assert_eq!(
@@ -1131,7 +1123,7 @@ fn days_are_dropped_from_the_last_to_stay_within_nine_messages() {
 #[test]
 fn alerts_beyond_nine_messages_continue_as_another_response() {
     // one alert per message, so 12 alerts need 12 messages
-    let parts: Vec<sms_reply::Part> = (0..12)
+    let parts: Vec<reply::Part> = (0..12)
         .map(|alert| {
             line(&format!(
                 "!Severe: Flood Warning {alert} {}",
@@ -1139,12 +1131,12 @@ fn alerts_beyond_nine_messages_continue_as_another_response() {
             ))
         })
         .collect();
-    let responses = sms_reply::add_headers(
-        sms_reply::pack_within(parts, sms_reply::MAX_MESSAGES),
+    let responses = reply::add_headers(
+        reply::pack_within(parts, reply::MAX_MESSAGES),
         Some("Mt Hood"),
     );
     assert_eq!(responses.len(), 2);
-    assert_eq!(responses[0].len(), sms_reply::MAX_MESSAGES);
+    assert_eq!(responses[0].len(), reply::MAX_MESSAGES);
     assert!(responses[0][0].starts_with("(1/9) Mt Hood\n"));
     assert!(responses[1][0].starts_with(&format!("(1/{}) Mt Hood\n", responses[1].len())));
     let sent = responses
@@ -1176,7 +1168,7 @@ fn brief_reply_drops_days_to_stay_within_brief_max_messages() {
         .collect();
     let responses = reply(&request, &response);
     assert_eq!(responses.len(), 1);
-    assert_eq!(responses[0].len(), sms_reply::BRIEF_MAX_MESSAGES);
+    assert_eq!(responses[0].len(), reply::BRIEF_MAX_MESSAGES);
     let lines: Vec<&str> = responses[0]
         .iter()
         .flat_map(|message| body(message))
@@ -1204,7 +1196,7 @@ fn brief_days_never_add_a_message_after_alerts_reach_the_cap() {
         .collect();
     let responses = reply(&request(true, 1), &response);
     assert_eq!(responses.len(), 1);
-    assert_eq!(responses[0].len(), sms_reply::BRIEF_MAX_MESSAGES);
+    assert_eq!(responses[0].len(), reply::BRIEF_MAX_MESSAGES);
     let lines: Vec<&str> = responses[0]
         .iter()
         .flat_map(|message| body(message))
@@ -1289,7 +1281,7 @@ fn brief_reply_with_optional_fields_continues_days_in_another_message() {
         ..ForecastProperties::default()
     };
     assert_eq!(
-        sms_reply::forecast_days(&forecast, &flags, TZ, now(), 2, sms_reply::Format::Brief),
+        reply::forecast_days(&forecast, &flags, TZ, now(), 2, reply::Format::Brief),
         [
             ["Tu 34/22 H80-100 P90 R0.85 S11 SW25G45"],
             ["We 30/19 H75-95 P70 R0.30 S5 W18G35"],
@@ -1362,7 +1354,7 @@ fn brief_days_fill_the_last_message_when_alerts_reach_the_cap() {
     let responses = reply(&request(true, 1), &response);
     assert_eq!(responses.len(), 1);
     let messages = &responses[0];
-    assert_eq!(messages.len(), sms_reply::BRIEF_MAX_MESSAGES);
+    assert_eq!(messages.len(), reply::BRIEF_MAX_MESSAGES);
     assert_eq!(
         body(&messages[2]),
         [
@@ -1411,49 +1403,49 @@ fn alerts_stale_notice_is_sent_in_every_reply() {
 #[test]
 fn parse_errors_are_one_line() {
     assert_eq!(
-        sms_reply::format_parse_error(&sms::SmsParseError::InvalidLatitude("95.1".to_string())),
+        reply::format_parse_error(&request::SmsParseError::InvalidLatitude("95.1".to_string())),
         "(1/1)\nBad latitude: 95.1"
     );
     assert_eq!(
-        sms_reply::format_parse_error(&sms::SmsParseError::WrongFieldCount(5)),
+        reply::format_parse_error(&request::SmsParseError::WrongFieldCount(5)),
         "(1/1)\nExpected 6 fields, found 5"
     );
     assert_eq!(
-        sms_reply::format_parse_error(&sms::SmsParseError::UnsupportedVersion("2".to_string())),
+        reply::format_parse_error(&request::SmsParseError::UnsupportedVersion("2".to_string())),
         "(1/1)\nUpdate the RidgeCast app"
     );
 }
 
 #[test]
 fn a_long_value_in_a_parse_error_is_cut_to_fit() {
-    let message = sms_reply::format_parse_error(&sms::SmsParseError::InvalidFlags("F".repeat(500)));
-    assert!(message.len() <= sms_reply::MESSAGE_LENGTH);
+    let message = reply::format_parse_error(&request::SmsParseError::InvalidFlags("F".repeat(500)));
+    assert!(message.len() <= reply::MESSAGE_LENGTH);
     assert!(message.starts_with("(1/1)\nBad flags: FFF"));
 }
 
 #[test]
 fn a_message_that_isnt_a_request_gets_the_help_message() {
-    let message = sms_reply::format_parse_error(&sms::SmsParseError::NotARequest);
+    let message = reply::format_parse_error(&request::SmsParseError::NotARequest);
     assert_eq!(
         message,
         "(1/1)\nRidgeCast: send requests from the RidgeCast app. Typed format: RC1 lat lon flags \
          hours days name. Reply STOP to opt out."
     );
-    assert!(message.len() <= sms_reply::MESSAGE_LENGTH);
+    assert!(message.len() <= reply::MESSAGE_LENGTH);
 }
 
 #[test]
 fn api_errors_are_one_line() {
     assert_eq!(
-        sms_reply::format_api_error(&errors::APIError::LocationNotCovered),
+        reply::format_api_error(&errors::APIError::LocationNotCovered),
         "(1/1)\nLocation not covered by NWS forecasts"
     );
     assert_eq!(
-        sms_reply::format_api_error(&errors::APIError::UpstreamTimeout),
+        reply::format_api_error(&errors::APIError::UpstreamTimeout),
         "(1/1)\nWeather service unavailable, try later"
     );
     assert_eq!(
-        sms_reply::format_api_error(&errors::APIError::DatabaseError),
+        reply::format_api_error(&errors::APIError::DatabaseError),
         "(1/1)\nServer error, try later"
     );
 }
