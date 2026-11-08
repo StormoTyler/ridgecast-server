@@ -489,7 +489,6 @@ pub async fn get_requested_forecast(
             Some(tz) => forecast_end(&tz, now, *forecast_length),
             None => forecast_end(&Utc, now, *forecast_length),
         };
-        // TODO: send the abbreviated forecast when forecast_vars.brief is set
         let forecast =
             RequestedForecast::from_properties(forecast, &forecast_vars.forecast_properties, end);
         (point, Some(forecast), active_alerts)
