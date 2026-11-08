@@ -430,11 +430,15 @@ pub(crate) fn trim_ints(mut series: IntVec, end: DateTime<Utc>) -> IntVec {
 // adds an alerts, avalanche, or daily forecast tracker if those fields are True
 // returns the avalanche zone's data at any danger level when track_avy is True,
 // and only at danger level 3 or higher when it is False
-// user is the sender's phone number, which identifies the user
+// user is the sender's phone number, which identifies the user.
+// now is read once by the caller and also given to sms_reply::format_reply, so the
+// forecast's local days, the avalanche check, the tracker's times, and the reply all
+// agree, even when the request arrives just before local midnight
 pub async fn get_requested_forecast(
     request: &SmsRequest,
     user: &str,
     db: &database::DB,
+    now: DateTime<Utc>,
 ) -> Result<SmsForecastResponse, errors::APIError> {
     let SmsRequest {
         lat,
@@ -481,7 +485,6 @@ pub async fn get_requested_forecast(
             .map_err(|e| nws_error("get_forecast", lat, lon, e, errors::APIError::ForecastError))?;
         // forecast days are local days at the location. NWS reports a time zone for
         // every point it covers, so UTC days are only a fallback
-        let now = Utc::now();
         let end = match daily_forecast::point_time_zone(&point) {
             Some(tz) => forecast_end(&tz, now, *forecast_length),
             None => forecast_end(&Utc, now, *forecast_length),
@@ -492,7 +495,6 @@ pub async fn get_requested_forecast(
         (point, Some(forecast), active_alerts)
     };
 
-    let now = chrono::Utc::now();
     let mut avy_notice = None;
     let mut avy_stale_notice = false;
     let track_avy = forecast_vars.track_avy;
