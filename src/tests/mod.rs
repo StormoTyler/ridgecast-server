@@ -1,5 +1,6 @@
 mod daily_forecast_tests;
 mod messaging_tests;
+mod models_tests;
 mod nac_tests;
 mod nws_tests;
 mod sms_reply_tests;

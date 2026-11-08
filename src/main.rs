@@ -170,7 +170,9 @@ async fn new_forecast(State(db): State<database::DB>) -> Response {
 
     let user_point = UserPoint {
         id: None,
-        user: "whatever".to_string(),
+        // placeholders, only to keep this stub compiling: the route will be rewritten
+        user: messaging::PhoneNumber::new("+10000000000").expect("placeholder is E.164"),
+        reply_from: messaging::PhoneNumber::new("+10000000000").expect("placeholder is E.164"),
         tracker_name: None,
         // all options off: forecast only, no alert tracking
         forecast_vars: ForecastVars::default(),

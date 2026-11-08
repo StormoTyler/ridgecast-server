@@ -1,6 +1,7 @@
 // tests for nac::check_avy_geometry and nac::check_avy_tracker against a saved NAC map-layer response
 use chrono::{DateTime, TimeZone, Utc};
 
+use crate::messaging;
 use crate::models::{
     AvalancheData, AvyArea, AvyProperties, DateTimeTypes, ForecastVars, GeometryErrorReason,
     GeometryTypes, InvalidAvyArea, Nwr, Point, PointGeometry, PointProperties, RawFeatures,
@@ -72,7 +73,8 @@ fn make_point(lat: f64, lon: f64) -> Point {
 fn make_tracker(avy: Option<AvyProperties>) -> UserPoint {
     UserPoint {
         id: None,
-        user: "test".to_string(),
+        user: messaging::PhoneNumber::new("+15415550100").unwrap(),
+        reply_from: messaging::PhoneNumber::new("+18005550100").unwrap(),
         tracker_name: Some("test".to_string()),
         forecast_vars: ForecastVars {
             track_avy: true,

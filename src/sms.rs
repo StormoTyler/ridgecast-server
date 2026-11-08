@@ -12,6 +12,7 @@ use serde::Serialize;
 use crate::daily_forecast;
 use crate::database;
 use crate::errors;
+use crate::messaging;
 use crate::models::{
     Alert, AlertsSorted, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
     ForecastResponse, ForecastVars, IntVec, Point, Properties, Snapshot, UserPoint,
@@ -430,13 +431,15 @@ pub(crate) fn trim_ints(mut series: IntVec, end: DateTime<Utc>) -> IntVec {
 // adds an alerts, avalanche, or daily forecast tracker if those fields are True
 // returns the avalanche zone's data at any danger level when track_avy is True,
 // and only at danger level 3 or higher when it is False
-// user is the sender's phone number, which identifies the user.
+// user is the sender's phone number, which identifies the user. reply_from is the
+// server number they texted, which the tracker stores to send its messages from.
 // now is read once by the caller and also given to sms_reply::format_reply, so the
 // forecast's local days, the avalanche check, the tracker's times, and the reply all
 // agree, even when the request arrives just before local midnight
 pub async fn get_requested_forecast(
     request: &SmsRequest,
-    user: &str,
+    user: &messaging::PhoneNumber,
+    reply_from: &messaging::PhoneNumber,
     db: &database::DB,
     now: DateTime<Utc>,
 ) -> Result<SmsForecastResponse, errors::APIError> {
@@ -566,7 +569,8 @@ pub async fn get_requested_forecast(
         // one tracker covers every option, its forecast_vars record which are on
         let user_point = UserPoint {
             id: None,
-            user: user.to_string(),
+            user: user.clone(),
+            reply_from: reply_from.clone(),
             tracker_name: tracker_name.clone(),
             forecast_vars: ForecastVars {
                 track_avy,

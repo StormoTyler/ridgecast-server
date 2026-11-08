@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 
 // local modules
+use crate::messaging;
 use crate::tracking;
 
 // user data models
@@ -12,7 +13,13 @@ pub struct UserPoint {
     // None until the tracker is inserted, then MongoDB assigns it
     #[serde(rename = "_id", default, skip_serializing_if = "Option::is_none")]
     pub id: Option<bson::oid::ObjectId>,
-    pub user: String,
+    // the user's phone number, which identifies them and receives the tracker's
+    // messages. validated when read, so a stored number is always E.164
+    pub user: messaging::PhoneNumber,
+    // the server number the user texted to create the tracker, which every
+    // message the tracker sends comes from, so the conversation never switches
+    // numbers (a satellite messenger's gateway may not deliver from another)
+    pub reply_from: messaging::PhoneNumber,
     // name the user gave the tracker, shown in its messages. None for a
     // UserPoint that is not a tracker
     #[serde(default)]
