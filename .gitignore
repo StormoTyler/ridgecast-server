@@ -1,6 +1,14 @@
 CLAUDE.md
 .env
+# output of scripts/points-test.sh
+points-test-*/
 
+# test scripts used in development
+# ignored due to future deprecation
+scripts/
+
+# unused website files - will be removed from the repository
+# in a future change
 site/
 # These are some examples of commonly ignored file patterns.
 # You should customize this list as applicable to your project.
