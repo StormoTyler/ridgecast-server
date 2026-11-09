@@ -22,6 +22,9 @@ pub const MESSAGE_LENGTH: usize = 140;
 // MESSAGE_LENGTH less the longest header and its line feed, "(x/n) " and a
 // 10 character tracker name, so every body fits under any header
 pub const BODY_LENGTH: usize = 123;
+// the header name of replies, errors, and the help message, which identifies
+// the sender. it fits in the space kept for a tracker name
+pub const BRAND: &str = "RidgeCast";
 // the n in an (x/n) header is one digit
 pub const MAX_MESSAGES: usize = 9;
 // forecast days in the brief format add messages only up to this many. more
@@ -1225,12 +1228,10 @@ fn pack_brief(parts: Vec<Part>) -> Vec<Vec<String>> {
 }
 
 // numbers the messages (x/n), with the tracker's name for messages a tracker
-// sends on its own. bodies beyond MAX_MESSAGES continue as another response,
-// numbered from (1/n) again
+// sends on its own and BRAND for everything else. bodies beyond MAX_MESSAGES
+// continue as another response, numbered from (1/n) again
 pub fn add_headers(bodies: Vec<Vec<String>>, tracker_name: Option<&str>) -> Vec<Vec<String>> {
-    let name = tracker_name
-        .map(|name| format!(" {name}"))
-        .unwrap_or_default();
+    let name = tracker_name.unwrap_or(BRAND);
     let bodies = if bodies.is_empty() {
         vec![Vec::new()]
     } else {
@@ -1244,7 +1245,7 @@ pub fn add_headers(bodies: Vec<Vec<String>>, tracker_name: Option<&str>) -> Vec<
                 .enumerate()
                 .map(|(index, body)| {
                     format!(
-                        "({}/{}){name}\n{}",
+                        "({}/{}) {name}\n{}",
                         index + 1,
                         response.len(),
                         body.join("\n")
@@ -1262,9 +1263,7 @@ pub fn add_headers(bodies: Vec<Vec<String>>, tracker_name: Option<&str>) -> Vec<
 pub fn format_parse_error(error: &request::SmsParseError) -> String {
     let line = match error {
         request::SmsParseError::NotARequest => {
-            "RidgeCast: send requests from the RidgeCast app. Typed format: RC1 lat lon flags \
-             hours days name. Reply STOP to opt out."
-                .to_string()
+            "Help: support@ridgecast.app. Reply STOP to opt out.".to_string()
         }
         request::SmsParseError::UnsupportedVersion(_) => "Update the RidgeCast app".to_string(),
         request::SmsParseError::WrongFieldCount(count) => {
@@ -1311,5 +1310,5 @@ fn with_value(label: &str, value: &str) -> String {
 }
 
 fn single_message(line: String) -> String {
-    format!("(1/1)\n{line}")
+    format!("(1/1) {BRAND}\n{line}")
 }

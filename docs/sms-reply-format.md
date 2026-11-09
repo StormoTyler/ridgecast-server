@@ -44,7 +44,7 @@ Every message is a header line followed by body lines, separated by a line
 feed (`\n`):
 
 ```
-(1/4)
+(1/4) RidgeCast
 Avy danger 3 Considerable, Mt Hood
 !Severe: Winter Storm Warning until Wed 10/7 6PM
 ```
@@ -58,21 +58,25 @@ tracker name, so a body line fits under any header.
 ### Header
 
 The header is `(x/n)`: `x` is the number of this message and `n` is the
-total number of messages in the response. A message sent by a tracker adds a
-space and the tracker's name, as given in the request (see
-[sms-format.md](sms-format.md#tracker-name)):
+total number of messages in the response, followed by a space and a name. A
+message sent by a tracker has the tracker's name, as given in the request (see
+[sms-format.md](sms-format.md#tracker-name)), and every other message has
+`RidgeCast`:
 
 ```
 (1/2) Mt Hood
+(1/2) RidgeCast
 ```
 
 - The name is in the header of every message that a tracker sends on its own:
   daily forecasts, alert and avalanche notifications, and the tracking ended
   message. A user with several trackers can tell which one a message is
   about, even when only some of its messages arrive.
-- Replies to requests, errors, and the help message have no name in the
-  header. A reply that creates a tracker names it in its tracker line
-  instead.
+- Replies to requests, errors, and the help message have `RidgeCast` in the
+  header, so every message identifies its sender, as toll-free verification
+  expects. `RidgeCast` fits in the space kept for a tracker name, so it costs
+  no body characters. A reply that creates a tracker names it in its tracker
+  line, and the user knows the reply answers the request they just sent.
 
 - Every message has a header, including a response that is a single message
   (`(1/1)`).
@@ -86,15 +90,15 @@ space and the tracker's name, as given in the request (see
 
 ### Message kinds
 
-| Kind | Sent when | Name in header | Body |
+| Kind | Sent when | Header name | Body |
 |---|---|---|---|
-| Reply | A request is answered | No | Notices, avalanche, alerts, forecast days, tracker |
-| Daily forecast | A `daily_forecast` tracker reaches 6 AM | Yes | Notices, avalanche, alerts, forecast days |
-| Alert notification | A tracker finds a new NWS alert | Yes | The new alerts |
-| Avalanche notification | A tracker finds a new avalanche forecast, or loses the forecast it last sent | Yes | Avalanche |
-| Tracker ended | A tracker has ended | Yes | `Tracking ended` |
-| Error | A request could not be answered | No | Error line |
-| Help | A message that is not a request | No | Help text |
+| Reply | A request is answered | `RidgeCast` | Notices, avalanche, alerts, forecast days, tracker |
+| Daily forecast | A `daily_forecast` tracker reaches 6 AM | Tracker name | Notices, avalanche, alerts, forecast days |
+| Alert notification | A tracker finds a new NWS alert | Tracker name | The new alerts |
+| Avalanche notification | A tracker finds a new avalanche forecast, or loses the forecast it last sent | Tracker name | Avalanche |
+| Tracker ended | A tracker has ended | Tracker name | `Tracking ended` |
+| Error | A request could not be answered | `RidgeCast` | Error line |
+| Help | A message that is not a request | `RidgeCast` | Help text |
 
 Every kind sent by a tracker uses the format of the request that created it,
 so a tracker created with `brief` sends brief daily forecasts and
@@ -382,7 +386,7 @@ likely to be dropped entirely when alerts take most of the first message.
 tracker messages that will never be sent.
 
 ```
-(1/1)
+(1/1) RidgeCast
 AV3 Considerable
 !Sev Winter Storm Warning til We7 6PM
 Tu 34/22 P90 R0.85 S11 SW25
@@ -486,12 +490,13 @@ that could not be read.
 | NWS or NAC is down or timed out | `Weather service unavailable, try later` |
 | Any other server error | `Server error, try later` |
 
-A message that is not a request (`SmsParseError::NotARequest`) gets a help
-message instead:
+A message that is not a request (`SmsParseError::NotARequest`), including
+`HELP`, gets a help message instead. It gives the contact address and how to
+opt out, which toll-free verification requires of the HELP response:
 
 ```
-(1/1)
-RidgeCast: send requests from the RidgeCast app. Typed format: RC1 lat lon flags hours days name. Reply STOP to opt out.
+(1/1) RidgeCast
+Help: support@ridgecast.app. Reply STOP to opt out.
 ```
 
 ## Examples
@@ -501,48 +506,48 @@ wind gust, named `Mt Hood`, with a 7-day forecast
 (`RC1 45.3735 -121.6959 0845 72 7 Mt Hood`), answered in 9 messages:
 
 ```
-(1/9)
+(1/9) RidgeCast
 Avy danger 3 Considerable, Mt Hood
 !Severe: Winter Storm Warning until Wed 10/7 6PM
 ```
 
 ```
-(2/9)
+(2/9) RidgeCast
 Tue: high 34F, low 22F Humidity 80-100% Precip 90%, 0.85in Snow 11in Wind SW 25mph, gusts 45
 ```
 
 ```
-(3/9)
+(3/9) RidgeCast
 Wed: high 30F, low 19F Humidity 75-95% Precip 70%, 0.30in Snow 5in Wind W 18mph, gusts 35
 ```
 
 ```
-(4/9)
+(4/9) RidgeCast
 Thu: high 36F, low 24F Humidity 60-90% Precip 20% Snow 0.5in Wind NW 10mph, gusts 20
 ```
 
 ```
-(5/9)
+(5/9) RidgeCast
 Fri: high 41F, low 27F Humidity 45-80% Precip 0% Wind N 6mph, gusts 12
 ```
 
 ```
-(6/9)
+(6/9) RidgeCast
 Sat: high 44F, low 30F Humidity 40-75% Precip 0% Wind E 5mph, gusts 9
 ```
 
 ```
-(7/9)
+(7/9) RidgeCast
 Sun: high 42F, low 29F Humidity 50-85% Precip 30% Wind SE 8mph, gusts 15
 ```
 
 ```
-(8/9)
+(8/9) RidgeCast
 Mon: high 45F, low 31F Humidity 55-90% Precip 40%, 0.10in Wind S 10mph, gusts 18
 ```
 
 ```
-(9/9)
+(9/9) RidgeCast
 Tracking Mt Hood: alerts, avy until Fri 10/9 10AM
 ```
 
@@ -552,14 +557,14 @@ humidity and wind gust, so each day has `H` and `G` tokens. Wednesday would
 take the first message past 123 characters, so it starts a second one:
 
 ```
-(1/2)
+(1/2) RidgeCast
 AV3 Considerable
 !Sev Winter Storm Warning til We7 6PM
 Tu 34/22 H80-100 P90 R0.85 S11 SW25G45
 ```
 
 ```
-(2/2)
+(2/2) RidgeCast
 We 30/19 H75-95 P70 R0.30 S5 W18G35
 ```
 
@@ -622,14 +627,14 @@ created, so the first forecast after the season starts is sent as an
 avalanche notification:
 
 ```
-(1/2)
+(1/2) RidgeCast
 Daily forecast unavailable
 Avy: center is in its off season
 Tue: high 68F, low 47F Precip 10% Wind NW 8mph
 ```
 
 ```
-(2/2)
+(2/2) RidgeCast
 Tracking Turnagain: avy until Fri 10/9 10AM
 ```
 

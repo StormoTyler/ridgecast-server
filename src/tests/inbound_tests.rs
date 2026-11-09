@@ -63,7 +63,7 @@ fn a_message_that_isnt_a_request_gets_the_help_message() {
         panic!("a message that isn't a request should get the help message");
     };
     assert_eq!(reply_from, number(LONG_CODE));
-    assert!(message.contains("send requests from the RidgeCast app"));
+    assert!(message.contains("Help: support@ridgecast.app"));
 }
 
 #[test]

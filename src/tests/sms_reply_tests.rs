@@ -1057,6 +1057,12 @@ fn full_reply_lines_are_in_reply_order() {
     response.tracker = Some(created_tracker(false));
     let responses = reply(&request, &response);
     assert_eq!(responses.len(), 1);
+    // the request names the tracker, but a reply is always headed by the brand
+    let count = responses[0].len();
+    for (index, message) in responses[0].iter().enumerate() {
+        let header = format!("({}/{count}) {}\n", index + 1, reply::BRAND);
+        assert!(message.starts_with(&header), "{message}");
+    }
     let lines: Vec<&str> = responses[0]
         .iter()
         .flat_map(|message| body(message))
@@ -1091,7 +1097,7 @@ fn reply_with_a_failed_tracker_has_the_notice_at_the_top() {
     let brief = reply(&tracker_request(true, 1), &response);
     assert_eq!(
         brief,
-        [["(1/1)\n!no tracker\nAV3 Considerable\nTu --/-- 5"]]
+        [["(1/1) RidgeCast\n!no tracker\nAV3 Considerable\nTu --/-- 5"]]
     );
 }
 
@@ -1302,9 +1308,9 @@ fn brief_reply_with_optional_fields_continues_days_in_another_message() {
     assert_eq!(
         reply(&request, &response),
         [[
-            "(1/2)\nAV3 Considerable\n!Sev Winter Storm Warning til We7 6PM\n\
+            "(1/2) RidgeCast\nAV3 Considerable\n!Sev Winter Storm Warning til We7 6PM\n\
              Tu 34/22 H80-100 P90 R0.85 S11 SW25G45",
-            "(2/2)\nWe 30/19 H75-95 P70 R0.30 S5 W18G35",
+            "(2/2) RidgeCast\nWe 30/19 H75-95 P70 R0.30 S5 W18G35",
         ]]
     );
 }
@@ -1332,7 +1338,7 @@ fn brief_reply_continues_alerts_past_the_cap_and_fills_the_last_message_with_day
     assert_eq!(responses.len(), 1);
     let messages = &responses[0];
     assert_eq!(messages.len(), 4);
-    assert!(messages[3].starts_with("(4/4)\n"));
+    assert!(messages[3].starts_with("(4/4) RidgeCast\n"));
     let alerts_sent = messages
         .iter()
         .flat_map(|message| body(message))
@@ -1388,7 +1394,7 @@ fn alerts_stale_notice_is_sent_in_every_reply() {
         response.alerts_stale_notice = true;
         assert_eq!(
             reply(&request(brief, 1), &response),
-            [[format!("(1/1)\n{notice}\n{day}")]],
+            [[format!("(1/1) RidgeCast\n{notice}\n{day}")]],
             "brief: {brief}, no alerts"
         );
 
@@ -1404,15 +1410,15 @@ fn alerts_stale_notice_is_sent_in_every_reply() {
 fn parse_errors_are_one_line() {
     assert_eq!(
         reply::format_parse_error(&request::SmsParseError::InvalidLatitude("95.1".to_string())),
-        "(1/1)\nBad latitude: 95.1"
+        "(1/1) RidgeCast\nBad latitude: 95.1"
     );
     assert_eq!(
         reply::format_parse_error(&request::SmsParseError::WrongFieldCount(5)),
-        "(1/1)\nExpected 6 fields, found 5"
+        "(1/1) RidgeCast\nExpected 6 fields, found 5"
     );
     assert_eq!(
         reply::format_parse_error(&request::SmsParseError::UnsupportedVersion("2".to_string())),
-        "(1/1)\nUpdate the RidgeCast app"
+        "(1/1) RidgeCast\nUpdate the RidgeCast app"
     );
 }
 
@@ -1420,7 +1426,7 @@ fn parse_errors_are_one_line() {
 fn a_long_value_in_a_parse_error_is_cut_to_fit() {
     let message = reply::format_parse_error(&request::SmsParseError::InvalidFlags("F".repeat(500)));
     assert!(message.len() <= reply::MESSAGE_LENGTH);
-    assert!(message.starts_with("(1/1)\nBad flags: FFF"));
+    assert!(message.starts_with("(1/1) RidgeCast\nBad flags: FFF"));
 }
 
 #[test]
@@ -1428,8 +1434,7 @@ fn a_message_that_isnt_a_request_gets_the_help_message() {
     let message = reply::format_parse_error(&request::SmsParseError::NotARequest);
     assert_eq!(
         message,
-        "(1/1)\nRidgeCast: send requests from the RidgeCast app. Typed format: RC1 lat lon flags \
-         hours days name. Reply STOP to opt out."
+        "(1/1) RidgeCast\nHelp: support@ridgecast.app. Reply STOP to opt out."
     );
     assert!(message.len() <= reply::MESSAGE_LENGTH);
 }
@@ -1438,14 +1443,14 @@ fn a_message_that_isnt_a_request_gets_the_help_message() {
 fn api_errors_are_one_line() {
     assert_eq!(
         reply::format_api_error(&errors::APIError::LocationNotCovered),
-        "(1/1)\nLocation not covered by NWS forecasts"
+        "(1/1) RidgeCast\nLocation not covered by NWS forecasts"
     );
     assert_eq!(
         reply::format_api_error(&errors::APIError::UpstreamTimeout),
-        "(1/1)\nWeather service unavailable, try later"
+        "(1/1) RidgeCast\nWeather service unavailable, try later"
     );
     assert_eq!(
         reply::format_api_error(&errors::APIError::DatabaseError),
-        "(1/1)\nServer error, try later"
+        "(1/1) RidgeCast\nServer error, try later"
     );
 }
