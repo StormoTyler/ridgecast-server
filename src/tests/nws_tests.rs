@@ -1,5 +1,5 @@
 // tests for nws::sort_alerts and nws::check_alerts against a saved /alerts/active response,
-// and for reading a saved /gridpoints response
+// and for reading saved /points and /gridpoints responses
 use std::collections::HashSet;
 
 use crate::models::{
@@ -553,4 +553,41 @@ fn gridpoints_test_data_deserializes() {
         None
     );
     assert_eq!(properties.pressure.uom, None);
+}
+
+// a saved /points response must deserialize, and the gridpoints URL that
+// nws::get_gridpoints requests must be NWS's forecastGridData, on the point's
+// own grid (gridId, x, y), so a renamed or missing field fails here rather
+// than every forecast. in the lower 48 cwa and gridId are the same office, so
+// the Alaska response, where they differ (AFC and AER), checks the URL names
+// the grid's office rather than the cwa
+#[test]
+fn points_test_data_deserializes_with_its_gridpoints_url() {
+    for (name, data) in [
+        ("Oregon", include_str!("test_data/nws_points_test_data")),
+        (
+            "Alaska",
+            include_str!("test_data/nws_points_alaska_test_data"),
+        ),
+    ] {
+        let point: Point = serde_json::from_str(data).unwrap_or_else(|e| {
+            panic!("{name}: the saved /points response should deserialize: {e}")
+        });
+        let raw: serde_json::Value = serde_json::from_str(data).unwrap();
+        let raw = &raw["properties"];
+        let grid_url = format!(
+            "https://api.weather.gov/gridpoints/{}/{},{}",
+            raw["gridId"].as_str().unwrap(),
+            raw["gridX"],
+            raw["gridY"]
+        );
+        assert_eq!(point.properties.forecast_grid_data, grid_url, "{name}");
+    }
+
+    let alaska: serde_json::Value =
+        serde_json::from_str(include_str!("test_data/nws_points_alaska_test_data")).unwrap();
+    assert_ne!(
+        alaska["properties"]["cwa"], alaska["properties"]["gridId"],
+        "the Alaska test data should have a cwa that differs from its grid"
+    );
 }
