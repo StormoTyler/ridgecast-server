@@ -48,6 +48,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let db = database::DB::init().await?;
 
+    // bound before anything is spawned, so a server that can't listen, such as when
+    // another one already holds the port, exits without starting refreshes that it
+    // would cancel, which would print misleading refresh failures
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 5001));
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("could not listen on {addr}: {e}"))?;
+
     // refresh the snapshots in the background, so startup doesn't wait on NWS or NAC.
     // a failure is only logged, the loaders refresh missing or stale snapshots on use
     let refresh_db = db.clone();
@@ -69,9 +77,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(scheduler::refresh_alerts(db.clone()));
     tokio::spawn(scheduler::refresh_avy(db.clone()));
 
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 5001));
-    println!("Listening on: {}", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    // printed only once the port is bound
+    println!("Listening on: {addr}");
     let state = state::AppState {
         db,
         numbers,
