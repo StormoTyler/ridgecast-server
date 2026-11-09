@@ -1039,7 +1039,7 @@ fn brief_token(kind: DaySentence, day: &DaySummary, flags: &ForecastProperties) 
         DaySentence::Snow => day
             .snow
             .and_then(snow_inches)
-            .map(|snow| format!("S{snow}")),
+            .map(|snow| format!("SN{snow}")),
         DaySentence::SnowLevel => brief_optional(
             flags.snow_level,
             "SL",

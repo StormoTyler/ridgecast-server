@@ -174,6 +174,14 @@ later` notice is included with or without `track_avy`, since a danger level of
 reason, `Avy: data may be out of date` is included with or without
 `track_avy`. It follows the danger line or other notice when there is one.
 
+The line gives only the danger level, the rating, and the zone name, to keep
+avalanche information to one short line. NAC's other forecast fields are not
+sent: the travel advice, the link to the full forecast, the avalanche center,
+and the avalanche warning or watch product (`warning`, which `AvyProperties`
+does not read). The center's own forecast has the details. The map styling
+fields (`color`, `stroke`, and the like), `state`, and `center_id` are not
+read at all.
+
 An avalanche tracker sends a notification when it finds a forecast that differs
 from the last one it sent. When that forecast stops being valid, for any
 reason, the tracker sends one notification:
@@ -389,8 +397,8 @@ tracker messages that will never be sent.
 (1/1) RidgeCast
 AV3 Considerable
 !Sev Winter Storm Warning til We7 6PM
-Tu 34/22 P90 R0.85 S11 SW25
-We 30/19 P70 R0.30 S5 W18
+Tu 34/22 P90 R0.85 SN11 SW25
+We 30/19 P70 R0.30 SN5 W18
 ```
 
 ### Brief tracker messages
@@ -427,12 +435,12 @@ The same local time as the full format, written shorter:
 | Alerts stale notice | `!alerts may be old` | The same notice as the full format, before the alert lines |
 | Alert | `!Sev Winter Storm Warning til We7 6PM` | `!`, the severity as three letters (`Ext`, `Sev`, `Mod`, `Min`, `Unk`), the NWS event name, `til`, and the expiry time. Sorted by severity, as in the full format. Never dropped |
 | Alerts unavailable notice | `!alerts not checked` | The full format's `!Alerts could not be checked`. It is never dropped |
-| Forecast day | `Tu 34/22 P90 R0.85 S11 SW25` | See below |
+| Forecast day | `Tu 34/22 P90 R0.85 SN11 SW25` | See below |
 
 ### Brief forecast day
 
 ```
-Tu 34/22 H80-100 P90 R0.85 S11 SW25G45
+Tu 34/22 H80-100 P90 R0.85 SN11 SW25G45
 ```
 
 A brief day has a token for every sentence the full format would show for it,
@@ -450,7 +458,7 @@ data is its label then `--`, such as `H--`, matching the full format's `N/A`.
 | `H30-80` | `Humidity 30-80%` | With `relative_humidity`. `H80` when the lowest and highest are the same |
 | `P90` | `Precip 90%` | Always, even at `P0`, as in the full format. Left out with no data, as in the full format. `P--` before an amount without a chance: `P-- R0.20` |
 | `R0.85` | the precipitation amount, `0.85in` | Left out when it is zero |
-| `S11` | `Snow 11in` | Left out when it rounds to zero. Rounded as in the full format: `S0.5`, `S2.5`, `S11` |
+| `SN11` | `Snow 11in` | Left out when it rounds to zero. Rounded as in the full format: `SN0.5`, `SN2.5`, `SN11` |
 | `SL4500` | `Snow level 4500ft` | With `snow_level` |
 | `EL5240` | `Elevation 5240ft` | With `elevation`, in the first forecast day only, as in the full format |
 | `I0.10` | `Ice 0.10in` | Left out when it is zero |
@@ -461,9 +469,8 @@ data is its label then `--`, such as `H--`, matching the full format's `N/A`.
 | `C1200` | `Cloud ceiling 1200ft` | With `ceiling_height`. `C--` when there is no ceiling |
 
 Every label starts with a letter that a compass direction does not, or adds
-a second letter that no direction has (`SL`, `EL`, `WB`), so a token can't be
-read as the wind. `S11` (snow) and `S12` (wind from the south) look alike,
-but the wind token always comes after the snow token.
+a second letter that no direction has (`SN`, `SL`, `EL`, `WB`), so a token
+can't be read as the wind: `SN11` is snow and `S12` is wind from the south.
 
 A day with every optional field takes about 70 to 95 characters, so with
 alerts or several days, fewer days fit in a brief message.
@@ -560,12 +567,12 @@ take the first message past 123 characters, so it starts a second one:
 (1/2) RidgeCast
 AV3 Considerable
 !Sev Winter Storm Warning til We7 6PM
-Tu 34/22 H80-100 P90 R0.85 S11 SW25G45
+Tu 34/22 H80-100 P90 R0.85 SN11 SW25G45
 ```
 
 ```
 (2/2) RidgeCast
-We 30/19 H75-95 P70 R0.30 S5 W18G35
+We 30/19 H75-95 P70 R0.30 SN5 W18G35
 ```
 
 A daily forecast from a tracker named `Camp`, then the same daily forecast

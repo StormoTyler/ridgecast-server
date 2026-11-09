@@ -632,7 +632,7 @@ fn snow_has_tenths_under_an_inch_halves_under_four_and_whole_inches_above() {
         1,
         reply::Format::Brief,
     );
-    assert_eq!(days, [["Tu --/-- S2.5 5"]]);
+    assert_eq!(days, [["Tu --/-- SN2.5 5"]]);
 }
 
 #[test]
@@ -851,7 +851,7 @@ fn brief_day_follows_the_same_order() {
         1,
         reply::Format::Brief,
     );
-    assert_eq!(days, [["Tu 34/22 P90 R0.85 S11 SW25"]]);
+    assert_eq!(days, [["Tu 34/22 P90 R0.85 SN11 SW25"]]);
 }
 
 #[test]
@@ -886,7 +886,7 @@ fn brief_day_has_a_token_for_every_requested_field() {
         days,
         [
             [
-                "Tu 34/22 WB85 HR2 H30-80 P90 R0.85 S11 SL4500 EL5240 I0.10 SW25G45 V0.5 PR29.85 C1200"
+                "Tu 34/22 WB85 HR2 H30-80 P90 R0.85 SN11 SL4500 EL5240 I0.10 SW25G45 V0.5 PR29.85 C1200"
             ]
         ]
     );
@@ -1289,8 +1289,8 @@ fn brief_reply_with_optional_fields_continues_days_in_another_message() {
     assert_eq!(
         reply::forecast_days(&forecast, &flags, TZ, now(), 2, reply::Format::Brief),
         [
-            ["Tu 34/22 H80-100 P90 R0.85 S11 SW25G45"],
-            ["We 30/19 H75-95 P70 R0.30 S5 W18G35"],
+            ["Tu 34/22 H80-100 P90 R0.85 SN11 SW25G45"],
+            ["We 30/19 H75-95 P70 R0.30 SN5 W18G35"],
         ]
     );
 
@@ -1309,8 +1309,8 @@ fn brief_reply_with_optional_fields_continues_days_in_another_message() {
         reply(&request, &response),
         [[
             "(1/2) RidgeCast\nAV3 Considerable\n!Sev Winter Storm Warning til We7 6PM\n\
-             Tu 34/22 H80-100 P90 R0.85 S11 SW25G45",
-            "(2/2) RidgeCast\nWe 30/19 H75-95 P70 R0.30 S5 W18G35",
+             Tu 34/22 H80-100 P90 R0.85 SN11 SW25G45",
+            "(2/2) RidgeCast\nWe 30/19 H75-95 P70 R0.30 SN5 W18G35",
         ]]
     );
 }
