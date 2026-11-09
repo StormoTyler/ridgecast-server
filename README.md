@@ -12,7 +12,7 @@ avalanche forecasts, and daily forecasts.
 
 > **Status: in development.** Answering requests works end to end with the
 > `local` SMS provider, which prints replies instead of texting them. SMS
-> provider adapters, and tracker messages, aren't implemented yet.
+> provider adapters and tracker messages aren't implemented yet.
 
 ## How it works
 
@@ -22,8 +22,8 @@ A request is one line ([request format](docs/sms-format.md)):
 RC1 45.3735 -121.6959 0000 0 2
 ```
 
-The server replies with numbered messages of at most 140
-characters ([reply format](docs/sms-reply-format.md)):
+The server replies with numbered messages of at most 140 characters
+([reply format](docs/sms-reply-format.md)):
 
 ```
 (1/2) RidgeCast
@@ -38,18 +38,20 @@ Data comes from:
   avalanche forecasts from local and regional avalanche centers
 
 Alerts and avalanche forecasts are refreshed on a schedule and stored in
-MongoDB. Coverage is wherever NWS forecasts: the US and its territories.
+MongoDB. Coverage is only where the NWS provides regular forecasts (may not
+cover all U.S. territories).
 
 ## Running it locally
 
 You need:
 - [Rust](https://rustup.rs) 1.97 or newer
-- A running MongoDB 7 server, where the server stores its data.
- 
- Example with Docker:
-  ```bash
-  docker run -d --name mongodb -p 127.0.0.1:27017:27017 mongo:7.0
-  ```
+- A running MongoDB 7 server, where the server stores its data
+
+Example with Docker:
+
+```bash
+docker run -d --name mongodb -p 127.0.0.1:27017:27017 mongo:7.0
+```
 
 Then:
 
