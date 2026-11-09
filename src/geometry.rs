@@ -28,7 +28,7 @@ impl fmt::Display for GeometryError {
     }
 }
 
-// converts geojson to the geo_types struct its type tag names, after checking
+// converts geojson to the geo struct its type tag names, after checking
 // it can be converted safely and used for location checks
 pub fn convert_geometry(geo: &geojson::Geometry) -> Result<GeometryTypes, GeometryError> {
     let conversion_error = |e: geojson::Error| {
@@ -37,13 +37,13 @@ pub fn convert_geometry(geo: &geojson::Geometry) -> Result<GeometryTypes, Geomet
     match &geo.value {
         GeometryValue::Polygon { coordinates } => {
             check_polygons(std::slice::from_ref(coordinates))?;
-            geo_types::Polygon::try_from(geo)
+            geo::Polygon::try_from(geo)
                 .map(GeometryTypes::Polygon)
                 .map_err(conversion_error)
         }
         GeometryValue::MultiPolygon { coordinates } => {
             check_polygons(coordinates)?;
-            geo_types::MultiPolygon::try_from(geo)
+            geo::MultiPolygon::try_from(geo)
                 .map(GeometryTypes::MultiPolygon)
                 .map_err(conversion_error)
         }

@@ -1,8 +1,8 @@
 // handler for NWS api
 use geo::Intersects;
-use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde_json;
+use std::sync::LazyLock;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -14,7 +14,7 @@ use crate::models::{
 
 const BASE_URL: &str = "https://api.weather.gov";
 
-static NWS_CLIENT: Lazy<Client> = Lazy::new(|| {
+static NWS_CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
         // NWS requires contact info in the User-Agent, checked at startup in main
         .user_agent(

@@ -4,9 +4,9 @@ use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use geo;
 use geo::Intersects;
-use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde_json;
+use std::sync::LazyLock;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -20,7 +20,7 @@ use crate::tracking;
 
 const BASE_URL: &str = "https://api.avalanche.org/v2/public/products/map-layer";
 
-static NAC_CLIENT: Lazy<Client> = Lazy::new(|| {
+static NAC_CLIENT: LazyLock<Client> = LazyLock::new(|| {
     Client::builder()
         // NWS requires contact info in the User-Agent, checked at startup in main
         .user_agent(
@@ -93,7 +93,7 @@ pub async fn get_avy() -> Result<(AvalancheData, Vec<InvalidAvyArea>, SkippedFea
     ))
 }
 
-// converts each zone's dates to local time and its geometry to geo_types,
+// converts each zone's dates to local time and its geometry to geo types,
 // so check_avy_geometry can test points against them
 // a zone whose geometry can't be converted keeps its Geojson geometry, which
 // check_avy_geometry never matches. it is logged and returned as an InvalidAvyArea

@@ -412,8 +412,8 @@ pub struct AvyProperties {
 #[serde(untagged)]
 pub enum GeometryTypes {
     Geojson(geojson::Geometry),
-    Polygon(geo_types::Polygon),
-    MultiPolygon(geo_types::MultiPolygon),
+    Polygon(geo::Polygon),
+    MultiPolygon(geo::MultiPolygon),
 }
 
 // why geometry::convert_geometry rejected a geometry, stored in the debugging collections
@@ -427,7 +427,7 @@ pub enum GeometryErrorReason {
     // no polygons, or an exterior ring with fewer than the 4 positions GeoJSON
     // requires. it would convert, but could never contain a point
     DegenerateGeometry,
-    // the conversion to geo_types returned an error
+    // the conversion to a geo type returned an error
     GeometryConversionFailed,
 }
 
