@@ -320,10 +320,7 @@ pub async fn get_gridpoints(point: &Point) -> Result<Properties, NWSError> {
     loop {
         let result: Result<Forecast, NWSError> = async {
             let gridpoints_response = NWS_CLIENT
-                .get(format!(
-                    "{BASE_URL}/gridpoints/{}/{},{}",
-                    point.properties.cwa, point.properties.grid_x, point.properties.grid_y
-                ))
+                .get(&point.properties.forecast_grid_data)
                 .send()
                 .await?
                 .error_for_status()?;

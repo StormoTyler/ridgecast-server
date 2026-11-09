@@ -119,7 +119,9 @@ pub struct PointProperties {
     // no need for option
     // if the value is None
     // there is an error with the json recieved from NWS
-    pub cwa: String,
+    // the gridpoints URL for the point. requested as given rather than built
+    // from cwa, which names a different office than the grid in Alaska
+    pub forecast_grid_data: String,
     pub grid_x: i32,
     pub grid_y: i32,
     pub nwr: Nwr,

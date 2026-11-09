@@ -53,7 +53,7 @@ fn find_zone<'a>(avy: &'a AvalancheData, name: &str) -> &'a AvyArea {
 fn make_point(lat: f64, lon: f64) -> Point {
     Point {
         properties: PointProperties {
-            cwa: "TEST".to_string(),
+            forecast_grid_data: "https://api.weather.gov/gridpoints/TEST/1,1".to_string(),
             grid_x: 0,
             grid_y: 0,
             nwr: Nwr {

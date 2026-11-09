@@ -15,7 +15,7 @@ fn tracker() -> UserPoint {
         forecast_vars: ForecastVars::default(),
         point: Point {
             properties: PointProperties {
-                cwa: "PQR".to_string(),
+                forecast_grid_data: "https://api.weather.gov/gridpoints/PQR/1,1".to_string(),
                 grid_x: 0,
                 grid_y: 0,
                 nwr: Nwr {

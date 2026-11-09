@@ -20,7 +20,7 @@ fn next(tz: Tz, after: &str) -> Option<DateTime<Utc>> {
 fn point_with_time_zone(time_zone: Option<&str>) -> Point {
     Point {
         properties: PointProperties {
-            cwa: "TEST".to_string(),
+            forecast_grid_data: "https://api.weather.gov/gridpoints/TEST/1,1".to_string(),
             grid_x: 0,
             grid_y: 0,
             nwr: Nwr {

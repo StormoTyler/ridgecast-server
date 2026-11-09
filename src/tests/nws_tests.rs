@@ -42,7 +42,7 @@ fn raw_feature_ids(with_geometry: bool) -> HashSet<String> {
 fn make_point(lat: f64, lon: f64, same_code: &str) -> Point {
     Point {
         properties: PointProperties {
-            cwa: "TEST".to_string(),
+            forecast_grid_data: "https://api.weather.gov/gridpoints/TEST/1,1".to_string(),
             grid_x: 0,
             grid_y: 0,
             nwr: Nwr {
