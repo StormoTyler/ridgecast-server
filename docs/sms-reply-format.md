@@ -260,7 +260,7 @@ data, so a value is never shown in the wrong unit.
 | `Wet bulb globe 85F` | `wet_bulb_globe_temperature` | `wet_bulb_globe_temperature` | Highest wet bulb globe temperature |
 | `Heat risk 2 of 4` | `heat_risk` | `heat_risk` | Highest NWS HeatRisk category, 0 to 4 |
 | `Humidity 30-80%` | `relative_humidity` | `relative_humidity` | Lowest-highest relative humidity |
-| `Precip 90%, 0.85in` | `probability_of_precipitation`, `quantitative_precipitation` | base | Highest chance of precipitation, always included, even at `Precip 0%`, since users expect it in a weather forecast. Then total precipitation as liquid in inches with 2 decimals, left out when it is zero. Left out with no data. An amount without a chance is `Precip N/A, 0.20in` |
+| `Precip 90%, 0.85in` | `probability_of_precipitation`, `quantitative_precipitation` | base | Highest hourly chance of precipitation during the day, which is how NWS's own 12-hour chances matched in the data checked, always included, even at `Precip 0%`, since users expect it in a weather forecast. Then total precipitation as liquid in inches with 2 decimals, left out when it is zero. Left out with no data. An amount without a chance is `Precip N/A, 0.20in` |
 | `Snow 11in` | `snowfall_amount` | base | Total snowfall in inches. 1 decimal under 1 inch, the nearest half inch under 4 inches (`Snow 2.5in`), whole inches from 4. Left out when it rounds to zero |
 | `Snow level 4500ft` | `snow_level` | `snow_level` | Lowest snow level in feet, rounded to 100 |
 | `Elevation 5240ft` | point elevation | `elevation` | The elevation of the forecast location in feet. Only in the first forecast day of a reply or daily forecast, since it is the same every day |
