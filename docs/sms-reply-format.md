@@ -2,7 +2,8 @@
 
 **Status: draft.** `src/sms/reply.rs` implements replies to requests, errors,
 and the help message. Daily forecasts and tracker notifications aren't
-implemented yet, and no route sends replies yet.
+implemented yet. Replies are sent only through the `local` SMS provider's
+development route, `POST /dev/sms`, until a real provider is added.
 
 This document defines the text messages that the RidgeCast server sends to
 users: replies to requests (see [sms-format.md](sms-format.md)), scheduled
@@ -352,14 +353,16 @@ the rest continue as another response, so no alert or tracker line is ever
 left out. The same applies to an alert notification with more alerts than fit
 in 9 messages, and to a daily forecast whose alerts don't fit in 3.
 
-A forecast day takes about 60 to 120 characters, depending on the weather and
+A forecast day takes about 45 to 120 characters, depending on the weather and
 the optional fields requested. A day with rain or snow and several optional
 fields fills a message on its own, and two quiet days can share one. The
-7-day reply in the [examples](#examples) takes 9 messages, so a 7-day reply
-takes about 6 to 9 messages. A request asks for fewer days with its forecast
-length field (see [sms-format.md](sms-format.md)). The brief format uses
-fewer messages, but it is harder to read, so it is never the default and the
-server never suggests it. Whether to use it is the user's choice in the app.
+7-day reply in the [examples](#examples), with an alert, two optional fields,
+and a tracker, takes 9 messages, and a 7-day reply with no optional fields
+and no alerts can take as few as 4 or 5, so a 7-day reply takes about 4 to 9
+messages. A request asks for fewer days with its forecast length field (see
+[sms-format.md](sms-format.md)). The brief format uses fewer messages, but it
+is harder to read, so it is never the default and the server never suggests
+it. Whether to use it is the user's choice in the app.
 
 ## Brief format
 
