@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# stops a commit when the Rust code isn't formatted, the same check CI runs.
+# turn it on once per clone with: git config core.hooksPath .githooks
+# it checks the working tree, so a file formatted but not staged passes here
+# and still fails CI: run cargo fmt, then git add the files again.
+# skip it for one commit with git commit --no-verify
+
+if ! cargo fmt --check > /dev/null 2>&1; then
+  echo "pre-commit: code isn't formatted. run cargo fmt, git add the changes, and commit again" >&2
+  exit 1
+fi

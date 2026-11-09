@@ -85,7 +85,13 @@ cargo clippy --all-targets -- -D warnings
 cargo test        # uses saved API responses, needs no MongoDB or network
 ```
 
-CI runs all three on every push and pull request to `main`.
+CI runs all three on every push and pull request to `main`. To catch
+unformatted code before it's committed, turn on the pre-commit hook once per
+clone:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 SMS providers are adapters in `src/sms_providers/`, and the rest of the server
 only sees the `messaging` interface, so adding a provider means adding one file
