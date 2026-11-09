@@ -13,7 +13,7 @@ use crate::errors;
 use crate::messaging;
 use crate::models::{
     Alert, AlertsSorted, AvalancheData, AvyProperties, Elevation, FloatVec, ForecastProperties,
-    ForecastResponse, ForecastVars, IntVec, Point, Properties, Snapshot, UserPoint,
+    ForecastVars, IntVec, Point, Properties, Snapshot, UserPoint,
 };
 use crate::sms::request;
 use crate::snapshots;
@@ -244,30 +244,31 @@ pub async fn get_requested_forecast(
         }
     };
 
-    let (point, forecast, active_alerts) = if forecast_vars.no_forecast {
-        // the point is still needed to check alerts and create trackers
-        let point = nws::get_point(lat, lon)
-            .await
-            .map_err(|e| nws_error("get_point", lat, lon, e, errors::APIError::NWSError))?;
-        let active_alerts = nws::check_alerts(&alerts, &point);
-        (point, None, active_alerts)
+    // the point is needed for alerts and trackers even without a forecast. it
+    // is fetched here rather than through nws::get_forecast, so a 404 from
+    // /points (not covered) can be told apart from one from gridpoints
+    let point = nws::get_point(lat, lon)
+        .await
+        .map_err(|e| nws_error("get_point", lat, lon, e, errors::APIError::NWSError))?;
+    let active_alerts = nws::check_alerts(&alerts, &point);
+
+    let forecast = if forecast_vars.no_forecast {
+        None
     } else {
-        let ForecastResponse {
-            point,
-            forecast,
-            alerts: active_alerts,
-        } = nws::get_forecast(lat, lon, &alerts)
+        let forecast = nws::get_gridpoints(&point)
             .await
-            .map_err(|e| nws_error("get_forecast", lat, lon, e, errors::APIError::ForecastError))?;
+            .map_err(|e| gridpoints_error(lat, lon, e))?;
         // forecast days are local days at the location. NWS reports a time zone for
         // every point it covers, so UTC days are only a fallback
         let end = match daily_forecast::point_time_zone(&point) {
             Some(tz) => forecast_end(&tz, now, *forecast_length),
             None => forecast_end(&Utc, now, *forecast_length),
         };
-        let forecast =
-            RequestedForecast::from_properties(forecast, &forecast_vars.forecast_properties, end);
-        (point, Some(forecast), active_alerts)
+        Some(RequestedForecast::from_properties(
+            forecast,
+            &forecast_vars.forecast_properties,
+            end,
+        ))
     };
 
     let mut avy_notice = None;
@@ -401,7 +402,8 @@ pub async fn get_requested_forecast(
     })
 }
 
-// maps an NWS error the same way the route handlers do
+// maps an NWS /points error the same way the route handlers do: a 404 means
+// the location is outside NWS coverage
 fn nws_error(
     call: &str,
     lat: f32,
@@ -417,6 +419,22 @@ fn nws_error(
         errors::APIError::UpstreamTimeout
     } else {
         fallback
+    }
+}
+
+// maps an NWS gridpoints error. the point was found, so a 404 is not "not
+// covered": it means the gridpoints URL from /points was wrong or NWS has no
+// grid data for it, and the user gets no forecast, so it's logged as an error
+fn gridpoints_error(lat: f32, lon: f32, e: nws::NWSError) -> errors::APIError {
+    if e.is_not_found() {
+        tracing::error!("get_requested_forecast: gridpoints not found for {lat},{lon}: {e}");
+        return errors::APIError::ForecastError;
+    }
+    tracing::warn!("get_requested_forecast: get_gridpoints failed for {lat},{lon}: {e}");
+    if e.is_timeout() {
+        errors::APIError::UpstreamTimeout
+    } else {
+        errors::APIError::ForecastError
     }
 }
 
