@@ -6,6 +6,7 @@ mod models_tests;
 mod nac_tests;
 mod nws_tests;
 mod outbound_tests;
+mod sms_providers_tests;
 mod sms_reply_tests;
 mod sms_tests;
 mod snapshots_tests;

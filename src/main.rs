@@ -18,14 +18,11 @@ mod errors;
 use crate::models::Snapshot;
 mod daily_forecast;
 mod geometry;
-// unused until the SMS route or the tracker checks send messages, remove the allow then
-#[allow(dead_code)]
 mod messaging;
 mod models;
 mod scheduler;
-// unused until an SMS route is added, remove the allow then
-#[allow(dead_code)]
 mod sms;
+mod sms_providers;
 mod snapshots;
 mod state;
 #[cfg(test)]
@@ -47,6 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // read before connecting to MongoDB, so a missing or invalid number stops the server at
     // once. a string like the checks above, so the message is printed rather than the variant
     let numbers = state::Numbers::from_env().map_err(|e| e.to_string())?;
+    let provider = sms_providers::from_env()?;
 
     let db = database::DB::init().await?;
 
@@ -74,11 +72,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 5001));
     println!("Listening on: {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app(state::AppState { db, numbers })).await?;
+    let state = state::AppState {
+        db,
+        numbers,
+        sender: provider.sender,
+    };
+    axum::serve(listener, app(state, provider.routes)).await?;
     Ok(())
 }
 
-fn app(state: state::AppState) -> Router {
+// provider_routes are the SMS provider's own routes, such as the local provider's
+// dev route, so the router never names a provider
+fn app(state: state::AppState, provider_routes: Router<state::AppState>) -> Router {
     Router::new()
         .route("/", get(homepage))
         .route("/health", get(health))
@@ -88,6 +93,7 @@ fn app(state: state::AppState) -> Router {
         .route("/check-alerts", get(check_alerts))
         .route("/get-avy", get(get_avy))
         .route("/check-avy", get(check_avy))
+        .merge(provider_routes)
         .with_state(state)
 }
 

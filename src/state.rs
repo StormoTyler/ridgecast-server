@@ -3,6 +3,8 @@
 // API keys) are not here: src/sms_providers builds those, so nothing in the
 // server's state names an SMS provider
 
+use std::sync::Arc;
+
 use axum::extract::FromRef;
 use thiserror::Error;
 
@@ -13,9 +15,9 @@ use crate::messaging;
 #[derive(Clone)]
 pub struct AppState {
     pub db: database::DB,
-    // read by the inbound SMS route, which isn't added yet
-    #[allow(dead_code)]
     pub numbers: Numbers,
+    // the provider's sender, built by sms_providers. the core sees only the port
+    pub sender: Arc<dyn messaging::MessageSender>,
 }
 
 // lets a handler take State<database::DB> rather than the whole AppState, so
@@ -88,11 +90,17 @@ impl Numbers {
     // sent from. None for any other number, such as another number on the
     // same provider account, so the message is dropped rather than answered
     // from a number this server doesn't use
-    #[allow(dead_code)]
     pub fn matching(&self, to: &messaging::PhoneNumber) -> Option<&messaging::PhoneNumber> {
         std::iter::once(&self.primary)
             .chain(&self.international)
             .find(|number| *number == to)
+    }
+}
+
+impl Numbers {
+    // SMS_NUMBER, the number a text is assumed to be sent to when no other is given
+    pub fn primary(&self) -> &messaging::PhoneNumber {
+        &self.primary
     }
 }
 

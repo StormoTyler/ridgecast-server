@@ -15,7 +15,9 @@ use crate::sms::{forecast, request};
 
 // ---- message limits, line order, and alert severity ----
 
-// the most restrictive limit found, from SMS via satellite on iPhone
+// the most restrictive limit found, from SMS via satellite on iPhone. the code
+// works from BODY_LENGTH, which is derived from it, so only the tests use it
+#[allow(dead_code)]
 pub const MESSAGE_LENGTH: usize = 140;
 // MESSAGE_LENGTH less the longest header and its line feed, "(x/n) " and a
 // 10 character tracker name, so every body fits under any header

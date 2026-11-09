@@ -39,7 +39,10 @@ impl PhoneNumber {
         }
     }
 
-    // the full number, for the adapter sending to it. never log the result
+    // the full number, for the adapter sending to it. never log the result.
+    // unused until an adapter sends to a real number: the local provider only
+    // prints the masked number
+    #[allow(dead_code)]
     pub fn expose(&self) -> &str {
         &self.0
     }
@@ -86,6 +89,10 @@ pub struct InboundMessage {
     // a server can have two numbers, a toll-free one and one for international users
     pub to: PhoneNumber,
     pub body: String,
+    // when the provider received the text. the core reads its own clock instead,
+    // since a provider's timestamp can be skewed; kept for logging and the Telnyx
+    // adapter, unused until then
+    #[allow(dead_code)]
     pub received_at: DateTime<Utc>,
     // opaque to the core, used only to drop duplicate webhook deliveries
     pub provider_message_id: String,
@@ -94,12 +101,16 @@ pub struct InboundMessage {
 // a message the provider accepted for sending
 #[derive(Debug, Clone)]
 pub struct SendReceipt {
-    // the provider's id, to match delivery status updates to the message later
+    // the provider's id, to match delivery status updates to the message later.
+    // unused until delivery status updates are handled
+    #[allow(dead_code)]
     pub provider_message_id: String,
 }
 
 // the core branches on the variant only, the strings are for logs,
-// so provider error codes never decide what the core does
+// so provider error codes never decide what the core does. only the tests
+// construct the variants until an adapter that can fail exists (local never fails)
+#[allow(dead_code)]
 #[derive(Debug, Error)]
 pub enum SendError {
     // may succeed if retried: a timeout, a 5xx response, or a rate limit.
