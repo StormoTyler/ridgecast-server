@@ -458,7 +458,7 @@ impl RawFeatures {
                         serde_json::Value::String(id) => id.clone(),
                         other => other.to_string(),
                     });
-                    eprintln!(
+                    tracing::warn!(
                         "{source}: skipping feature {}: {e}",
                         feature_id.as_deref().unwrap_or("without id")
                     );
@@ -475,7 +475,7 @@ impl RawFeatures {
         }
 
         if !skipped.is_empty() {
-            eprintln!("{source}: skipped {} of {total} features", skipped.len());
+            tracing::warn!("{source}: skipped {} of {total} features", skipped.len());
         }
         (
             parsed,

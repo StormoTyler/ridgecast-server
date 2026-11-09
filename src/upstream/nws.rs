@@ -74,12 +74,7 @@ async fn fetch_alerts() -> Result<RawFeatures, NWSError> {
         .await?
         .error_for_status()?;
 
-    //println!("data received from NWS endpoint");
-
     let alerts_json: serde_json::Value = alerts_response.json().await?;
-
-    //println!("NWS data jsonified");
-    //println!("{:?}", alerts_json);
 
     Ok(serde_json::from_value(alerts_json)?)
 }
@@ -87,12 +82,10 @@ async fn fetch_alerts() -> Result<RawFeatures, NWSError> {
 // returns the sorted alerts, the alerts that failed validation,
 // and the features that couldn't be deserialized
 pub async fn get_alerts() -> Result<(AlertsSorted, Vec<InvalidAlert>, SkippedFeatures), NWSError> {
-    //println!("get_alerts called)");
-
     // retry once if the response is malformed
     let raw = match fetch_alerts().await {
         Err(e) if e.is_malformed() => {
-            eprintln!("get_alerts: malformed response, retrying once: {e}");
+            tracing::warn!("get_alerts: malformed response, retrying once: {e}");
             fetch_alerts().await?
         }
         result => result?,
@@ -127,7 +120,7 @@ pub fn parse_alerts(raw: RawFeatures) -> (Alerts, Vec<InvalidAlert>, SkippedFeat
                 .into_iter()
                 .partition(|code| Geocode::is_valid_same_code(code));
         if !invalid.is_empty() {
-            eprintln!(
+            tracing::warn!(
                 "parse_alerts: alert {} ({}): removing SAME codes that don't match \
                 ^\\d{{6}}$: {invalid:?}",
                 alert_id(alert),
@@ -138,7 +131,7 @@ pub fn parse_alerts(raw: RawFeatures) -> (Alerts, Vec<InvalidAlert>, SkippedFeat
         alert.properties.geocode.same = valid;
 
         if alert.properties.geocode.same.is_empty() {
-            eprintln!(
+            tracing::warn!(
                 "parse_alerts: alert {} ({}) has no SAME code",
                 alert_id(alert),
                 alert_event(alert)
@@ -154,7 +147,7 @@ pub fn parse_alerts(raw: RawFeatures) -> (Alerts, Vec<InvalidAlert>, SkippedFeat
             match geometry::convert_geometry(geo) {
                 Ok(new_geo) => alert.geometry = Some(new_geo),
                 Err(error) => {
-                    eprintln!(
+                    tracing::warn!(
                         "parse_alerts: alert {} ({}): removing geometry that can't be used, \
                         matching by SAME code instead: {error}",
                         alert_id(alert),
@@ -200,7 +193,7 @@ pub fn sort_alerts(mut alerts: Alerts) -> AlertsSorted {
                     alerts_sorted.add_geometry_alert(alert);
                 }
                 Err(e) => {
-                    eprintln!(
+                    tracing::warn!(
                         "sort_alerts: alert {} ({}): geometry conversion failed, \
                             matching by SAME code instead: {e}",
                         alert_id(alert),
@@ -217,7 +210,7 @@ pub fn sort_alerts(mut alerts: Alerts) -> AlertsSorted {
     }
 
     if !alerts_sorted.unmatched.is_empty() {
-        eprintln!(
+        tracing::warn!(
             "sort_alerts: {} alerts have no usable geometry or SAME code \
             and can't be matched to a location",
             alerts_sorted.unmatched.len()
@@ -229,7 +222,7 @@ pub fn sort_alerts(mut alerts: Alerts) -> AlertsSorted {
 // files an alert under each of its SAME codes, or in unmatched if it has none
 fn add_by_same_code(alerts_sorted: &mut AlertsSorted, alert: &Alert) {
     if alert.properties.geocode.same.is_empty() {
-        eprintln!(
+        tracing::warn!(
             "sort_alerts: alert {} ({}) has no usable geometry or SAME code",
             alert_id(alert),
             alert_event(alert)
@@ -267,7 +260,7 @@ pub fn check_alerts(alerts: &AlertsSorted, point: &Point) -> Vec<Alert> {
         };
 
         if intersects {
-            println!("alert matched via geometry!");
+            tracing::debug!("alert matched via geometry!");
             checked.push(alert.clone());
         }
     }
@@ -293,7 +286,7 @@ pub async fn get_point(lat: f32, lon: f32) -> Result<Point, NWSError> {
 
         match result {
             Err(e) if !retried && e.is_transient() => {
-                eprintln!("get_point: transient failure, retrying once: {e}");
+                tracing::warn!("get_point: transient failure, retrying once: {e}");
                 retried = true;
             }
             result => return result,
@@ -309,7 +302,6 @@ pub async fn get_forecast(
 ) -> Result<ForecastResponse, NWSError> {
     let point = get_point(lat, lon).await?;
     let forecast = get_gridpoints(&point).await?;
-    //println!("forecast is: {:?}", forecast);
 
     let active_alerts: Vec<Alert> = check_alerts(alerts, &point);
 
@@ -338,15 +330,13 @@ pub async fn get_gridpoints(point: &Point) -> Result<Properties, NWSError> {
 
             let gridpoints: serde_json::Value = gridpoints_response.json().await?;
 
-            //println!("gridpoints is {:?}", gridpoints);
-
             Ok(serde_json::from_value(gridpoints)?)
         }
         .await;
 
         match result {
             Err(e) if !retried && e.is_transient() => {
-                eprintln!("get_gridpoints: transient failure, retrying once: {e}");
+                tracing::warn!("get_gridpoints: transient failure, retrying once: {e}");
                 retried = true;
             }
             result => return result.map(|forecast| forecast.properties),

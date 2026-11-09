@@ -70,7 +70,7 @@ pub async fn load_alerts(db: &database::DB) -> Result<Snapshot<AlertsSorted>, er
         Some(alerts) => {
             let stale = is_stale(alerts.fetched_at, ALERTS_MAX_AGE, Utc::now());
             if stale {
-                eprintln!(
+                tracing::warn!(
                     "load_alerts: using stale alerts fetched at {}",
                     alerts.fetched_at
                 );
@@ -116,7 +116,7 @@ pub async fn load_avy(db: &database::DB) -> Result<Snapshot<AvalancheData>, erro
         Some(avy) => {
             let stale = is_stale(avy.fetched_at, AVY_MAX_AGE, Utc::now());
             if stale {
-                eprintln!(
+                tracing::warn!(
                     "load_avy: using stale avalanche data fetched at {}",
                     avy.fetched_at
                 );
@@ -133,7 +133,7 @@ pub async fn load_avy(db: &database::DB) -> Result<Snapshot<AvalancheData>, erro
 // snapshot that is missing alerts
 async fn fetch_alerts(db: &database::DB) -> Result<AlertsSorted, errors::APIError> {
     let (alerts, invalid_alerts, skipped) = nws::get_alerts().await.map_err(|e| {
-        eprintln!("fetch_alerts: failed to get alerts: {e}");
+        tracing::warn!("fetch_alerts: failed to get alerts: {e}");
         if e.is_timeout() {
             errors::APIError::UpstreamTimeout
         } else {
@@ -142,7 +142,7 @@ async fn fetch_alerts(db: &database::DB) -> Result<AlertsSorted, errors::APIErro
     })?;
     store_skipped_features(db, &skipped).await;
     if skipped.too_many() {
-        eprintln!(
+        tracing::error!(
             "fetch_alerts: {} of {} alerts couldn't be deserialized, at least \
             {SKIPPED_FEATURES_FAIL_PERCENT}%, so the alerts are not used",
             skipped.features.len(),
@@ -155,7 +155,7 @@ async fn fetch_alerts(db: &database::DB) -> Result<AlertsSorted, errors::APIErro
     // to store them doesn't fail the fetch
     for invalid_alert in invalid_alerts.iter() {
         if let Err(e) = store_invalid_alert(db, invalid_alert).await {
-            eprintln!(
+            tracing::warn!(
                 "fetch_alerts: failed to store invalid alert {:?}: {e}",
                 invalid_alert.alert_id
             );
@@ -218,9 +218,10 @@ async fn store_skipped_features(db: &database::DB, skipped: &SkippedFeatures) {
                 .map(|_| ()),
         };
         if let Err(e) = result {
-            eprintln!(
+            tracing::warn!(
                 "store_skipped_features: failed to store {} feature {:?}: {e}",
-                feature.source, feature.feature_id
+                feature.source,
+                feature.feature_id
             );
         }
     }
@@ -253,7 +254,7 @@ where
 // deserialized, for the same reason as fetch_alerts
 async fn fetch_avy(db: &database::DB) -> Result<AvalancheData, errors::APIError> {
     let (avy, invalid_areas, skipped) = nac::get_avy().await.map_err(|e| {
-        eprintln!("fetch_avy: failed to get avalanche data: {e}");
+        tracing::warn!("fetch_avy: failed to get avalanche data: {e}");
         if e.is_timeout() {
             errors::APIError::UpstreamTimeout
         } else {
@@ -262,7 +263,7 @@ async fn fetch_avy(db: &database::DB) -> Result<AvalancheData, errors::APIError>
     })?;
     store_skipped_features(db, &skipped).await;
     if skipped.too_many() {
-        eprintln!(
+        tracing::error!(
             "fetch_avy: {} of {} avalanche zones couldn't be deserialized, at least \
             {SKIPPED_FEATURES_FAIL_PERCENT}%, so the avalanche data is not used",
             skipped.features.len(),
@@ -275,7 +276,7 @@ async fn fetch_avy(db: &database::DB) -> Result<AvalancheData, errors::APIError>
     // to store them doesn't fail the fetch
     for invalid_area in invalid_areas.iter() {
         if let Err(e) = store_invalid_avy_area(db, invalid_area).await {
-            eprintln!(
+            tracing::warn!(
                 "fetch_avy: failed to store invalid avalanche zone {:?}: {e}",
                 invalid_area.zone_name
             );
@@ -293,7 +294,7 @@ async fn store_alerts(db: &database::DB, alerts: &AlertsSorted) -> Result<(), er
         .await
         .map(|_| ())
         .map_err(|e| {
-            eprintln!("store_alerts: failed to store alerts: {e}");
+            tracing::warn!("store_alerts: failed to store alerts: {e}");
             errors::APIError::DatabaseError
         })
 }
@@ -305,7 +306,7 @@ async fn store_avy(db: &database::DB, avy: &AvalancheData) -> Result<(), errors:
         .await
         .map(|_| ())
         .map_err(|e| {
-            eprintln!("store_avy: failed to store avalanche data: {e}");
+            tracing::warn!("store_avy: failed to store avalanche data: {e}");
             errors::APIError::DatabaseError
         })
 }
@@ -317,7 +318,7 @@ async fn read_alerts(db: &database::DB) -> Option<AlertsSorted> {
         .find_one(doc! {})
         .await
         .unwrap_or_else(|e| {
-            eprintln!("read_alerts: failed to read alerts from database: {e}");
+            tracing::warn!("read_alerts: failed to read alerts from database: {e}");
             None
         })
 }
@@ -327,7 +328,7 @@ async fn read_avy(db: &database::DB) -> Option<AvalancheData> {
         .find_one(doc! {})
         .await
         .unwrap_or_else(|e| {
-            eprintln!("read_avy: failed to read avalanche data from database: {e}");
+            tracing::warn!("read_avy: failed to read avalanche data from database: {e}");
             None
         })
 }

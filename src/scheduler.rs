@@ -33,7 +33,7 @@ pub async fn refresh_alerts(db: database::DB) {
         // a failed refresh is only logged, the loaders refresh stale data on use
         // and the next scheduled refresh tries again
         if let Err(e) = snapshots::refresh_alerts(&db).await {
-            eprintln!("refresh_alerts: scheduled alerts refresh failed: {e}");
+            tracing::warn!("refresh_alerts: scheduled alerts refresh failed: {e}");
         }
     }
 }
@@ -59,7 +59,7 @@ pub async fn refresh_avy(db: database::DB) {
         // a failed refresh is only logged, the loaders refresh stale data on use
         // and the next scheduled refresh tries again
         if let Err(e) = snapshots::refresh_avy(&db).await {
-            eprintln!("refresh_avy: scheduled avalanche refresh failed: {e}");
+            tracing::warn!("refresh_avy: scheduled avalanche refresh failed: {e}");
         }
     }
 }

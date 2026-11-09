@@ -62,8 +62,6 @@ async fn fetch_avy() -> Result<RawFeatures, NACError> {
 
     let avy_json: serde_json::Value = avy_response.json().await?;
 
-    //println!("{avy_json}");
-
     Ok(serde_json::from_value(avy_json)?)
 }
 
@@ -73,12 +71,11 @@ pub async fn get_avy() -> Result<(AvalancheData, Vec<InvalidAvyArea>, SkippedFea
     // retry once if the response is malformed
     let raw = match fetch_avy().await {
         Err(e) if e.is_malformed() => {
-            eprintln!("get_avy: malformed response, retrying once: {e}");
+            tracing::warn!("get_avy: malformed response, retrying once: {e}");
             fetch_avy().await?
         }
         result => result?,
     };
-    //println!("{:?}", avy);
 
     let (features, skipped) = raw.parse("NAC map layer");
     let (features, invalid_areas) = build_avy_map(features);
@@ -127,7 +124,7 @@ pub fn build_avy_map(mut features: Vec<AvyArea>) -> (Vec<AvyArea>, Vec<InvalidAv
                 Err(error) => {
                     let zone_name = area.properties.name.clone();
                     let center = area.properties.center.clone();
-                    eprintln!(
+                    tracing::warn!(
                         "build_avy_map: zone {} ({}) can't be matched to a location, {error}",
                         zone_name.as_deref().unwrap_or("without name"),
                         center.as_deref().unwrap_or("unknown center")

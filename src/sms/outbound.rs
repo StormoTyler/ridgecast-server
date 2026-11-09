@@ -53,7 +53,7 @@ async fn send_in_order(
         let stop = match &result {
             Ok(_) => false,
             Err(messaging::SendError::Transient(error)) => {
-                eprintln!(
+                tracing::error!(
                     "outbound: message {} of {} failed after {SEND_ATTEMPTS} attempts, \
                      sending the rest: {error}",
                     index + 1,
@@ -62,7 +62,7 @@ async fn send_in_order(
                 false
             }
             Err(error) => {
-                eprintln!(
+                tracing::warn!(
                     "outbound: message {} of {} not sent, stopping: {error}",
                     index + 1,
                     messages.len()

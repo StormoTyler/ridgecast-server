@@ -19,6 +19,8 @@ chrono = { version = "0.4.45", features = ["serde"] }
 chrono-tz = "0.10.4"
 dotenvy = "0.15"
 async-trait = "0.1.92"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 
 [dev-dependencies]

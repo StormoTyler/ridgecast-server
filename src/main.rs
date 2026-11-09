@@ -35,6 +35,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // local development only. in production the host sets the variables,
     // and dotenvy never overwrites a variable that's already set
     dotenvy::dotenv().ok();
+    // logs go to stderr. RUST_LOG overrides the level, such as RUST_LOG=ridgecast=debug;
+    // by default RidgeCast logs at info and its dependencies only warnings
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        // colors only on a terminal, so a log file or journal doesn't get escape codes
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,ridgecast=info")),
+        )
+        .init();
     // checked here so a missing value fails at startup, not on the first NWS or NAC request
     // or by silently connecting to the default local database
     for name in ["RIDGECAST_USER_AGENT", "DATABASE_URL", "RIDGECAST_DB"] {
@@ -65,10 +76,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             snapshots::refresh_avy(&refresh_db)
         );
         if let Err(e) = alerts {
-            eprintln!("startup: alerts refresh failed: {e}");
+            tracing::warn!("startup: alerts refresh failed: {e}");
         }
         if let Err(e) = avy {
-            eprintln!("startup: avalanche refresh failed: {e}");
+            tracing::warn!("startup: avalanche refresh failed: {e}");
         }
     });
 
@@ -78,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(scheduler::refresh_avy(db.clone()));
 
     // printed only once the port is bound
-    println!("Listening on: {addr}");
+    tracing::info!("Listening on: {addr}");
     let state = state::AppState {
         db,
         numbers,

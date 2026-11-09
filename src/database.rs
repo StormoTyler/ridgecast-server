@@ -101,7 +101,7 @@ impl DB {
             .create_index(ttl_index())
             .await?;
 
-        println!("Pinged your database. Successfully connected to MongoDB!");
+        tracing::info!("Pinged your database. Successfully connected to MongoDB!");
 
         Ok(Self {
             alerts_collection,

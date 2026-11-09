@@ -237,7 +237,7 @@ pub async fn get_requested_forecast(
             data
         }
         Err(e) => {
-            eprintln!("get_requested_forecast: alerts unavailable: {e}");
+            tracing::warn!("get_requested_forecast: alerts unavailable: {e}");
             alerts_notice = true;
             // matches no point, so active_alerts is empty
             AlertsSorted::default()
@@ -283,7 +283,7 @@ pub async fn get_requested_forecast(
             Some(data)
         }
         Err(e) => {
-            eprintln!("get_requested_forecast: avalanche data unavailable: {e}");
+            tracing::warn!("get_requested_forecast: avalanche data unavailable: {e}");
             None
         }
     };
@@ -323,7 +323,7 @@ pub async fn get_requested_forecast(
             // send such a request (see docs/sms-format.md)
             Some(tz) => daily_forecast::next_daily_forecast(tz, time_added, expires),
             None => {
-                eprintln!(
+                tracing::warn!(
                     "get_requested_forecast: no usable time zone for {lat},{lon}: {:?}",
                     point.properties.time_zone
                 );
@@ -364,7 +364,9 @@ pub async fn get_requested_forecast(
         let name = tracker_name.as_deref().unwrap_or("without name");
         let mut saved = database::add_tracker(&user_point, db).await;
         if let Err(e) = &saved {
-            eprintln!("get_requested_forecast: failed to save tracker {name}, retrying once: {e}");
+            tracing::warn!(
+                "get_requested_forecast: failed to save tracker {name}, retrying once: {e}"
+            );
             saved = database::add_tracker(&user_point, db).await;
         }
         tracker = Some(match saved {
@@ -377,7 +379,7 @@ pub async fn get_requested_forecast(
                 ends: expires,
             }),
             Err(e) => {
-                eprintln!(
+                tracing::error!(
                     "get_requested_forecast: retry failed, tracker {name} was not created: {e}"
                 );
                 TrackerStatus::NotCreated
@@ -410,7 +412,7 @@ fn nws_error(
     if e.is_not_found() {
         return errors::APIError::LocationNotCovered;
     }
-    eprintln!("get_requested_forecast: {call} failed for {lat},{lon}: {e}");
+    tracing::warn!("get_requested_forecast: {call} failed for {lat},{lon}: {e}");
     if e.is_timeout() {
         errors::APIError::UpstreamTimeout
     } else {

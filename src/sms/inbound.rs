@@ -61,7 +61,7 @@ pub async fn handle(
     let (reply_from, responses) = match plan(message, numbers) {
         Plan::Drop => {
             // no numbers in the log, a message to the wrong number is still a user's text
-            eprintln!(
+            tracing::warn!(
                 "inbound: dropped message {}, not sent to one of this server's numbers",
                 message.provider_message_id
             );

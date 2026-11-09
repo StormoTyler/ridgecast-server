@@ -759,7 +759,9 @@ fn convert_series<T>(
     read: impl Fn(&T) -> (&Option<String>, Option<f64>),
 ) -> Vec<Interval> {
     let Some(convert) = unit.converter(uom) else {
-        eprintln!("sms_reply: {field} has unit {uom:?}, which can't be converted, leaving it out");
+        tracing::warn!(
+            "sms_reply: {field} has unit {uom:?}, which can't be converted, leaving it out"
+        );
         return Vec::new();
     };
     values
