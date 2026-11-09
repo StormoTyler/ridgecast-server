@@ -884,11 +884,9 @@ fn brief_day_has_a_token_for_every_requested_field() {
     );
     assert_eq!(
         days,
-        [
-            [
-                "Tu 34/22 WB85 HR2 H30-80 P90 R0.85 SN11 SL4500 EL5240 I0.10 SW25G45 V0.5 PR29.85 C1200"
-            ]
-        ]
+        [[
+            "Tu 34/22 WB85 HR2 H30-80 P90 R0.85 SN11 SL4500 EL5240 I0.10 SW25G45 V0.5 PR29.85 C1200"
+        ]]
     );
 }
 
