@@ -1,0 +1,21 @@
+# files left out of the Docker build context, so they never reach an image.
+# Docker doesn't read .gitignore, so anything secret must be listed here too
+
+# secrets: the host supplies the variables when the container starts (see
+# .env.example for the names). never copy a .env into an image
+.env
+.env.*
+!.env.example
+
+# build output, rebuilt inside the image
+target/
+
+# repository and local development files the server doesn't need
+.git/
+.githooks/
+.github/
+.idea/
+.claude/
+scripts/
+points-test-*/
+*.log
