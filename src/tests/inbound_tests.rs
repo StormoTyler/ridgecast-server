@@ -77,3 +77,35 @@ fn an_invalid_request_gets_its_parse_error() {
         .unwrap_err();
     assert_eq!(message, reply::format_parse_error(&error));
 }
+
+fn forecast_reply() -> Vec<Vec<String>> {
+    vec![vec![
+        "(1/2) RidgeCast\nforecast".to_string(),
+        "(2/2) RidgeCast\nmore".to_string(),
+    ]]
+}
+
+// a number with no record in sms::user_numbers gets the opt-in message as its own message,
+// before the reply
+#[test]
+fn the_opt_in_message_comes_first_when_needed() {
+    let responses = inbound::with_opt_in_message(true, forecast_reply());
+    assert_eq!(responses[0], vec![reply::help_message()]);
+    assert_eq!(responses[1..], forecast_reply()[..]);
+}
+
+#[test]
+fn the_opt_in_message_is_left_out_once_sent() {
+    assert_eq!(
+        inbound::with_opt_in_message(false, forecast_reply()),
+        forecast_reply()
+    );
+}
+
+// a first text that isn't a request gets the help message, which is the
+// opt-in message, so it isn't sent twice
+#[test]
+fn the_help_reply_is_not_sent_twice() {
+    let help = vec![vec![reply::help_message()]];
+    assert_eq!(inbound::with_opt_in_message(true, help.clone()), help);
+}

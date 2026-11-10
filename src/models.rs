@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, FixedOffset, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
 
@@ -39,6 +39,11 @@ pub struct UserPoint {
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub time_added: DateTime<Utc>,
     pub valid_duration: u32,
+    // when the tracker stops, valid_duration hours after time_added. stored so
+    // MongoDB can delete the tracker database::TRACKER_DELETE_GRACE after it,
+    // as a BSON date, which the TTL index needs
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub expires_at: DateTime<Utc>,
     // when a daily_forecast tracker sends its next forecast, None for other
     // trackers and once no 6 AM is left before the tracker expires
     #[serde(
@@ -48,13 +53,20 @@ pub struct UserPoint {
     pub next_daily_forecast: Option<DateTime<Utc>>,
 }
 
-impl UserPoint {
-    // the tracker stops valid_duration hours after it was added
-    // unused until the scheduler checks tracker expiry, remove the allow then
-    #[allow(dead_code)]
-    pub fn expires_at(&self) -> DateTime<Utc> {
-        self.time_added + Duration::hours(self.valid_duration.into())
-    }
+// a user's phone number, the server's only record of which numbers used the
+// service. written by sms::user_numbers::record_use once the number has been sent
+// the opt-in message, and deleted database::USER_NUMBER_TTL after last_seen
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UserNumber {
+    // user_numbers::NumberKey::number_id of the number, never the number itself
+    #[serde(rename = "_id")]
+    pub id: String,
+    // when the opt-in message was first delivered to the number
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub opt_in_sent: DateTime<Utc>,
+    // when the number last texted the server
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub last_seen: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

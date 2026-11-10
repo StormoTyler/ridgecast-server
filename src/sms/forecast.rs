@@ -358,6 +358,7 @@ pub async fn get_requested_forecast(
             avy_off_season: Default::default(),
             time_added,
             valid_duration: *tracker_duration,
+            expires_at: expires,
             next_daily_forecast,
         };
         // the forecast is the safety information, so it is sent even if the

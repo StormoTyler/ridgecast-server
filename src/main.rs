@@ -29,6 +29,7 @@ mod state;
 mod tests;
 mod tracking;
 use crate::models::{ForecastVars, UserPoint};
+use crate::sms::user_numbers;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -55,6 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // read before connecting to MongoDB, so a missing or invalid number stops the server at
     // once. a string like the checks above, so the message is printed rather than the variant
     let numbers = state::Numbers::from_env().map_err(|e| e.to_string())?;
+    let number_key = user_numbers::NumberKey::from_env().map_err(|e| e.to_string())?;
     let provider = sms_providers::from_env()?;
 
     let db = database::DB::init().await?;
@@ -93,6 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = state::AppState {
         db,
         numbers,
+        number_key,
         sender: provider.sender,
     };
     axum::serve(listener, app(state, provider.routes)).await?;
@@ -203,6 +206,7 @@ async fn new_forecast(State(db): State<database::DB>) -> Response {
         avy_off_season: Default::default(),
         time_added: chrono::Utc::now(),
         valid_duration: 0,
+        expires_at: chrono::Utc::now(),
         next_daily_forecast: None,
     };
     if let Err(e) = database::add_tracker(&user_point, &db).await {

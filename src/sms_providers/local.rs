@@ -68,8 +68,14 @@ async fn dev_sms(State(state): State<state::AppState>, Json(text): Json<DevText>
         received_at,
         provider_message_id: format!("dev-{}", received_at.timestamp_micros()),
     };
-    let deliveries =
-        inbound::handle(&message, &state.numbers, &state.db, state.sender.as_ref()).await;
+    let deliveries = inbound::handle(
+        &message,
+        &state.numbers,
+        &state.number_key,
+        &state.db,
+        state.sender.as_ref(),
+    )
+    .await;
     format_deliveries(&deliveries)
 }
 

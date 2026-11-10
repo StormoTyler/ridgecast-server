@@ -8,16 +8,25 @@ use std::time::Duration;
 
 // local modules
 use crate::models::{
-    AlertsSorted, AvalancheData, InvalidAlert, InvalidAvyArea, SkippedFeature, UserPoint,
+    AlertsSorted, AvalancheData, InvalidAlert, InvalidAvyArea, SkippedFeature, UserNumber,
+    UserPoint,
 };
 
 // debugging records are deleted this long after an alert or zone last failed validation
 const DEBUG_RECORD_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+// a user's number record is deleted this long after the number last texted
+pub const USER_NUMBER_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+// a tracker is deleted this long after it expires. the hourly tracker check
+// sends the tracker ended message at its first run after expiry, so the tracker
+// is kept long enough to be seen even if the scheduler was down for a while
+pub const TRACKER_DELETE_GRACE: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Clone, Debug)]
 pub struct DB {
     pub alerts_collection: Collection<AlertsSorted>,
     pub points_collection: Collection<UserPoint>,
+    // the users' phone numbers, stored as HMACs (see sms::user_numbers)
+    pub user_numbers_collection: Collection<UserNumber>,
     pub avy_collection: Collection<AvalancheData>,
     // alerts that failed validation, kept for debugging
     pub invalid_alerts_collection: Collection<InvalidAlert>,
@@ -44,6 +53,7 @@ impl DB {
 
         let alerts_collection = database.collection::<AlertsSorted>("alerts");
         let points_collection = database.collection::<UserPoint>("points");
+        let user_numbers_collection = database.collection::<UserNumber>("user_numbers");
         let avy_collection = database.collection::<AvalancheData>("avy");
         let invalid_alerts_collection = database.collection::<InvalidAlert>("invalid_alerts");
         let invalid_avy_areas_collection =
@@ -83,22 +93,38 @@ impl DB {
         // mongo deletes debugging records once last_seen is older than DEBUG_RECORD_TTL.
         // every refresh that sees the problem again updates last_seen, so only
         // problems NWS or NAC no longer send expire
-        let ttl_index = || {
+        let ttl_index = |ttl| {
             IndexModel::builder()
                 .keys(doc! { "last_seen": 1 })
-                .options(
-                    IndexOptions::builder()
-                        .expire_after(DEBUG_RECORD_TTL)
-                        .build(),
-                )
+                .options(IndexOptions::builder().expire_after(ttl).build())
                 .build()
         };
-        invalid_alerts_collection.create_index(ttl_index()).await?;
+        invalid_alerts_collection
+            .create_index(ttl_index(DEBUG_RECORD_TTL))
+            .await?;
         invalid_avy_areas_collection
-            .create_index(ttl_index())
+            .create_index(ttl_index(DEBUG_RECORD_TTL))
             .await?;
         skipped_features_collection
-            .create_index(ttl_index())
+            .create_index(ttl_index(DEBUG_RECORD_TTL))
+            .await?;
+        // the same for user numbers: each text updates last_seen, so a record
+        // is deleted USER_NUMBER_TTL after its number last texted
+        user_numbers_collection
+            .create_index(ttl_index(USER_NUMBER_TTL))
+            .await?;
+        // trackers are deleted TRACKER_DELETE_GRACE after they expire
+        points_collection
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! { "expires_at": 1 })
+                    .options(
+                        IndexOptions::builder()
+                            .expire_after(TRACKER_DELETE_GRACE)
+                            .build(),
+                    )
+                    .build(),
+            )
             .await?;
 
         tracing::info!("Pinged your database. Successfully connected to MongoDB!");
@@ -106,6 +132,7 @@ impl DB {
         Ok(Self {
             alerts_collection,
             points_collection,
+            user_numbers_collection,
             avy_collection,
             invalid_alerts_collection,
             invalid_avy_areas_collection,

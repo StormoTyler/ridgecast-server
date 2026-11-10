@@ -100,6 +100,7 @@ message sent by a tracker has the tracker's name, as given in the request (see
 | Tracker ended | A tracker has ended | Tracker name | `Tracking ended` |
 | Error | A request could not be answered | `RidgeCast` | Error line |
 | Help | A message that is not a request | `RidgeCast` | Help text |
+| Opt-in | Before the first reply to a number, unless that reply is the help message | `RidgeCast` | Help text |
 
 Every kind sent by a tracker uses the format of the request that created it,
 so a tracker created with `brief` sends brief daily forecasts and
@@ -508,6 +509,14 @@ opt out, which toll-free verification requires of the HELP response:
 (1/1) RidgeCast
 Help: support@ridgecast.app. Reply STOP to opt out.
 ```
+
+The same message is the opt-in message. A number the server hasn't sent it to
+gets it as its own message before the reply to its first text, so the
+contact address and how to opt out arrive once rather than in every reply. A
+first text that is not a request gets only the help message, which already
+says the same. The server remembers that a number was sent it until 30 days
+after the number last texted, so a number that texts again after that gets
+it once more.
 
 ## Examples
 

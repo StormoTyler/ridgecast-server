@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 // local modules
 use crate::database;
 use crate::messaging;
-use crate::sms::{forecast, outbound, reply, request};
+use crate::sms::{forecast, outbound, reply, request, user_numbers};
 use crate::state;
 
 // what to do with an inbound message, decided before anything is fetched
@@ -50,10 +50,13 @@ pub fn plan(message: &messaging::InboundMessage, numbers: &state::Numbers) -> Pl
 
 // handles one inbound message and returns what was sent, in order. empty when the
 // message was dropped. the clock is read once here, so the forecast, the tracker,
-// and the reply all use the same time
+// and the reply all use the same time. a number with no record gets
+// the opt-in message first, and every message that isn't dropped refreshes the
+// number's record
 pub async fn handle(
     message: &messaging::InboundMessage,
     numbers: &state::Numbers,
+    number_key: &user_numbers::NumberKey,
     db: &database::DB,
     sender: &dyn messaging::MessageSender,
 ) -> Vec<outbound::Delivery> {
@@ -79,7 +82,26 @@ pub async fn handle(
             (reply_from, responses)
         }
     };
-    outbound::send_responses(sender, &reply_from, &message.from, &responses).await
+    let needs_opt_in = user_numbers::needs_opt_in_message(db, number_key, &message.from).await;
+    let responses = with_opt_in_message(needs_opt_in, responses);
+    let deliveries = outbound::send_responses(sender, &reply_from, &message.from, &responses).await;
+    // the help message is the opt-in message, whether it was added or was the reply
+    let help = reply::help_message();
+    let sent_opt_in = deliveries
+        .iter()
+        .any(|delivery| delivery.body == help && delivery.result.is_ok());
+    user_numbers::record_use(db, number_key, &message.from, sent_opt_in, now).await;
+    deliveries
+}
+
+// the opt-in message goes before the reply as its own (1/1) message. a reply
+// that is the help message already has the same text, so it isn't sent twice
+pub fn with_opt_in_message(needs_opt_in: bool, responses: Vec<Vec<String>>) -> Vec<Vec<String>> {
+    let help = reply::help_message();
+    if !needs_opt_in || responses.iter().flatten().any(|message| *message == help) {
+        return responses;
+    }
+    std::iter::once(vec![help]).chain(responses).collect()
 }
 
 // the reply to a request, as responses of messages, or a one-message error if the

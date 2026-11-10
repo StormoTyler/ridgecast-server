@@ -12,3 +12,4 @@ mod sms_tests;
 mod snapshots_tests;
 mod state_tests;
 mod tracking_tests;
+mod user_numbers_tests;

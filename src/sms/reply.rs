@@ -1258,13 +1258,20 @@ pub fn add_headers(bodies: Vec<Vec<String>>, tracker_name: Option<&str>) -> Vec<
 
 // ---- errors and the help message ----
 
+// the help message's text, which toll-free verification requires of the HELP
+// response. it is also the opt-in message, sent once before a number's first reply
+const HELP: &str = "Help: support@ridgecast.app. Reply STOP to opt out.";
+
+// the help message, a single message. inbound sends it as the opt-in message too
+pub fn help_message() -> String {
+    single_message(HELP.to_string())
+}
+
 // the reply to a request that could not be read, a single message. a message
 // that is not a request at all gets the help message
 pub fn format_parse_error(error: &request::SmsParseError) -> String {
     let line = match error {
-        request::SmsParseError::NotARequest => {
-            "Help: support@ridgecast.app. Reply STOP to opt out.".to_string()
-        }
+        request::SmsParseError::NotARequest => HELP.to_string(),
         request::SmsParseError::UnsupportedVersion(_) => "Update the RidgeCast app".to_string(),
         request::SmsParseError::WrongFieldCount(count) => {
             format!("Expected 6 fields, found {count}")

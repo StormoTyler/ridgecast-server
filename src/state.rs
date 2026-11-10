@@ -11,11 +11,14 @@ use thiserror::Error;
 // local modules
 use crate::database;
 use crate::messaging;
+use crate::sms::user_numbers;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: database::DB,
     pub numbers: Numbers,
+    // USER_NUMBERS_KEY, which sms::user_numbers stores numbers under
+    pub number_key: user_numbers::NumberKey,
     // the provider's sender, built by sms_providers. the core sees only the port
     pub sender: Arc<dyn messaging::MessageSender>,
 }

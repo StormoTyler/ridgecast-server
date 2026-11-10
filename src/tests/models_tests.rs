@@ -34,6 +34,7 @@ fn tracker() -> UserPoint {
         avy_off_season: Default::default(),
         time_added: chrono::Utc::now(),
         valid_duration: 24,
+        expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
         next_daily_forecast: None,
     }
 }
@@ -60,4 +61,14 @@ fn tracker_numbers_are_stored_as_plain_strings_and_validated_when_read() {
             "{field} should be validated when read"
         );
     }
+}
+
+// MongoDB's TTL index deletes a tracker by expires_at only when it is a BSON date
+#[test]
+fn tracker_expires_at_is_stored_as_a_date() {
+    let stored = bson::to_document(&tracker()).expect("tracker should serialize");
+    assert!(
+        stored.get_datetime("expires_at").is_ok(),
+        "expires_at should be a BSON date"
+    );
 }

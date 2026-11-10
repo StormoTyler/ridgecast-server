@@ -86,6 +86,7 @@ fn make_tracker(avy: Option<AvyProperties>) -> UserPoint {
         avy_off_season: Default::default(),
         time_added: chrono::Utc::now(),
         valid_duration: 24,
+        expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
         next_daily_forecast: None,
     }
 }
