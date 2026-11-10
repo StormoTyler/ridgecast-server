@@ -3,6 +3,7 @@
 use crate::messaging;
 use crate::sms::{inbound, reply, request};
 use crate::state;
+use crate::tests;
 
 const USER: &str = "+15415550123";
 const TOLL_FREE: &str = "+18005550100";
@@ -54,6 +55,7 @@ fn a_request_is_answered_from_the_number_it_was_sent_to() {
 
 #[test]
 fn a_message_that_isnt_a_request_gets_the_help_message() {
+    tests::set_support_email();
     let plan = inbound::plan(&text(LONG_CODE, "hello"), &numbers());
     let inbound::Plan::Reply {
         reply_from,
@@ -63,7 +65,7 @@ fn a_message_that_isnt_a_request_gets_the_help_message() {
         panic!("a message that isn't a request should get the help message");
     };
     assert_eq!(reply_from, number(LONG_CODE));
-    assert!(message.contains("Help: support@ridgecast.app"));
+    assert!(message.contains(&format!("Help: {}", tests::SUPPORT_EMAIL)));
 }
 
 #[test]
@@ -89,6 +91,7 @@ fn forecast_reply() -> Vec<Vec<String>> {
 // before the reply
 #[test]
 fn the_opt_in_message_comes_first_when_needed() {
+    tests::set_support_email();
     let responses = inbound::with_opt_in_message(true, forecast_reply());
     assert_eq!(responses[0], vec![reply::help_message()]);
     assert_eq!(responses[1..], forecast_reply()[..]);
@@ -96,6 +99,7 @@ fn the_opt_in_message_comes_first_when_needed() {
 
 #[test]
 fn the_opt_in_message_is_left_out_once_sent() {
+    tests::set_support_email();
     assert_eq!(
         inbound::with_opt_in_message(false, forecast_reply()),
         forecast_reply()
@@ -106,6 +110,7 @@ fn the_opt_in_message_is_left_out_once_sent() {
 // opt-in message, so it isn't sent twice
 #[test]
 fn the_help_reply_is_not_sent_twice() {
+    tests::set_support_email();
     let help = vec![vec![reply::help_message()]];
     assert_eq!(inbound::with_opt_in_message(true, help.clone()), help);
 }

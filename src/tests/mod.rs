@@ -13,3 +13,12 @@ mod snapshots_tests;
 mod state_tests;
 mod tracking_tests;
 mod user_numbers_tests;
+
+// the SUPPORT_EMAIL tests use, set once for the whole test binary, since
+// sms::reply keeps it in a OnceLock. call it in any test that builds the help message
+pub const SUPPORT_EMAIL: &str = "support@example.com";
+
+pub fn set_support_email() {
+    // an error only means another test set it first, to the same address
+    let _ = crate::sms::reply::set_support_email(Some(SUPPORT_EMAIL));
+}

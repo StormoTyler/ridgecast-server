@@ -1258,20 +1258,55 @@ pub fn add_headers(bodies: Vec<Vec<String>>, tracker_name: Option<&str>) -> Vec<
 
 // ---- errors and the help message ----
 
+// SUPPORT_EMAIL, the contact address in the help message. set once at startup
+// by set_support_email, before any message is handled
+static SUPPORT_EMAIL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+// reads the value of SUPPORT_EMAIL, None when unset, and keeps it for the help
+// message. an error stops the server at startup: the address is required, since
+// toll-free verification requires it in the HELP response, and the help line
+// must fit in BODY_LENGTH
+pub fn set_support_email(value: Option<&str>) -> Result<(), String> {
+    let email = value
+        .map(str::trim)
+        .filter(|email| !email.is_empty())
+        .ok_or("SUPPORT_EMAIL must be set")?;
+    if !email.contains('@') || email.chars().any(char::is_whitespace) {
+        return Err("SUPPORT_EMAIL must be an email address, such as support@example.com".into());
+    }
+    let room = BODY_LENGTH - help_line("").chars().count();
+    if email.chars().count() > room {
+        return Err(format!("SUPPORT_EMAIL must be at most {room} characters"));
+    }
+    SUPPORT_EMAIL
+        .set(email.to_string())
+        .map_err(|_| "SUPPORT_EMAIL was already set".to_string())
+}
+
 // the help message's text, which toll-free verification requires of the HELP
 // response. it is also the opt-in message, sent once before a number's first reply
-const HELP: &str = "Help: support@ridgecast.app. Reply STOP to opt out.";
+fn help_line(email: &str) -> String {
+    format!("Help: {email}. Reply STOP to opt out.")
+}
+
+fn help() -> String {
+    help_line(
+        SUPPORT_EMAIL
+            .get()
+            .expect("SUPPORT_EMAIL is set at startup"),
+    )
+}
 
 // the help message, a single message. inbound sends it as the opt-in message too
 pub fn help_message() -> String {
-    single_message(HELP.to_string())
+    single_message(help())
 }
 
 // the reply to a request that could not be read, a single message. a message
 // that is not a request at all gets the help message
 pub fn format_parse_error(error: &request::SmsParseError) -> String {
     let line = match error {
-        request::SmsParseError::NotARequest => HELP.to_string(),
+        request::SmsParseError::NotARequest => help(),
         request::SmsParseError::UnsupportedVersion(_) => "Update the RidgeCast app".to_string(),
         request::SmsParseError::WrongFieldCount(count) => {
             format!("Expected 6 fields, found {count}")

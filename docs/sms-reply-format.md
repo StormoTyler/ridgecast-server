@@ -524,7 +524,8 @@ that could not be read.
 
 A message that is not a request (`SmsParseError::NotARequest`), including
 `HELP`, gets a help message instead. It gives the contact address and how to
-opt out, which toll-free verification requires of the HELP response:
+opt out, which toll-free verification requires of the HELP response. The
+address is the server's `SUPPORT_EMAIL`, shown here as support@ridgecast.app:
 
 ```
 (1/1) RidgeCast

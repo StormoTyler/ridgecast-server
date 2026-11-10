@@ -8,6 +8,7 @@ use crate::models::{
     Point, PointGeometry, PointProperties, TimeFloat, TimeInt,
 };
 use crate::sms::{forecast, reply, request};
+use crate::tests;
 
 const TZ: Tz = chrono_tz::America::Los_Angeles;
 
@@ -1429,12 +1430,40 @@ fn a_long_value_in_a_parse_error_is_cut_to_fit() {
 
 #[test]
 fn a_message_that_isnt_a_request_gets_the_help_message() {
+    tests::set_support_email();
     let message = reply::format_parse_error(&request::SmsParseError::NotARequest);
     assert_eq!(
         message,
-        "(1/1) RidgeCast\nHelp: support@ridgecast.app. Reply STOP to opt out."
+        format!(
+            "(1/1) RidgeCast\nHelp: {}. Reply STOP to opt out.",
+            tests::SUPPORT_EMAIL
+        )
     );
     assert!(message.len() <= reply::MESSAGE_LENGTH);
+}
+
+// each of these fails before the address is kept, so it doesn't change the
+// address the other tests set
+#[test]
+fn a_missing_support_email_is_rejected() {
+    assert!(reply::set_support_email(None).is_err());
+    assert!(reply::set_support_email(Some("  ")).is_err());
+}
+
+#[test]
+fn a_support_email_that_isnt_an_address_is_rejected() {
+    assert!(reply::set_support_email(Some("support")).is_err());
+    assert!(reply::set_support_email(Some("support @example.com")).is_err());
+}
+
+// the help line must fit in BODY_LENGTH, which leaves 93 characters for the address
+#[test]
+fn a_support_email_too_long_for_the_help_line_is_rejected() {
+    let email = format!("{}@example.com", "a".repeat(94 - "@example.com".len()));
+    assert_eq!(
+        reply::set_support_email(Some(&email)),
+        Err("SUPPORT_EMAIL must be at most 93 characters".to_string())
+    );
 }
 
 #[test]

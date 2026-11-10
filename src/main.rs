@@ -29,7 +29,7 @@ mod state;
 mod tests;
 mod tracking;
 use crate::models::{ForecastVars, UserPoint};
-use crate::sms::user_numbers;
+use crate::sms::{reply, user_numbers};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -57,6 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // once. a string like the checks above, so the message is printed rather than the variant
     let numbers = state::Numbers::from_env().map_err(|e| e.to_string())?;
     let number_key = user_numbers::NumberKey::from_env().map_err(|e| e.to_string())?;
+    reply::set_support_email(std::env::var("SUPPORT_EMAIL").ok().as_deref())?;
     let provider = sms_providers::from_env()?;
 
     let db = database::DB::init().await?;
