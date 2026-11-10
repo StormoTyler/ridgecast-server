@@ -22,6 +22,9 @@ dotenvy = "0.15"
 async-trait = "0.1.92"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+# the contacts list stores an HMAC-SHA256 of each number rather than the number
+hmac = "0.12"
+sha2 = "0.10"
 
 
 [dev-dependencies]
