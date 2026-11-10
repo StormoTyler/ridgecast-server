@@ -39,9 +39,8 @@ pub struct UserPoint {
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub time_added: DateTime<Utc>,
     pub valid_duration: u32,
-    // when the tracker stops, valid_duration hours after time_added. stored so
-    // MongoDB can delete the tracker database::TRACKER_DELETE_GRACE after it,
-    // as a BSON date, which the TTL index needs
+    // when the tracker stops, valid_duration hours after time_added
+    // a UserPoint is deleted at expires_at
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub expires_at: DateTime<Utc>,
     // when a daily_forecast tracker sends its next forecast, None for other

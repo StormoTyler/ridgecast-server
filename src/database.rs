@@ -16,10 +16,6 @@ use crate::models::{
 const DEBUG_RECORD_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 // a user's number record is deleted this long after the number last texted
 pub const USER_NUMBER_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
-// a tracker is deleted this long after it expires. the hourly tracker check
-// sends the tracker ended message at its first run after expiry, so the tracker
-// is kept long enough to be seen even if the scheduler was down for a while
-pub const TRACKER_DELETE_GRACE: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Clone, Debug)]
 pub struct DB {
@@ -113,16 +109,13 @@ impl DB {
         user_numbers_collection
             .create_index(ttl_index(USER_NUMBER_TTL))
             .await?;
-        // trackers are deleted TRACKER_DELETE_GRACE after they expire
+        // trackers are deleted at expires_at. nothing checks an expired tracker:
+        // the last check before expiry sends the tracker's final message
         points_collection
             .create_index(
                 IndexModel::builder()
                     .keys(doc! { "expires_at": 1 })
-                    .options(
-                        IndexOptions::builder()
-                            .expire_after(TRACKER_DELETE_GRACE)
-                            .build(),
-                    )
+                    .options(IndexOptions::builder().expire_after(Duration::ZERO).build())
                     .build(),
             )
             .await?;

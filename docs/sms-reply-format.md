@@ -97,7 +97,7 @@ message sent by a tracker has the tracker's name, as given in the request (see
 | Daily forecast | A `daily_forecast` tracker reaches 6 AM | Tracker name | Notices, avalanche, alerts, forecast days |
 | Alert notification | A tracker finds a new NWS alert | Tracker name | The new alerts |
 | Avalanche notification | A tracker finds a new avalanche forecast, or loses the forecast it last sent | Tracker name | Avalanche |
-| Tracker ended | A tracker has ended | Tracker name | `Tracking ended` |
+| Tracker ended | The tracker's last check before it expires | Tracker name | `Tracking ended`, the last line of that check's message, or alone when the check sends nothing else |
 | Error | A request could not be answered | `RidgeCast` | Error line |
 | Help | A message that is not a request | `RidgeCast` | Help text |
 | Opt-in | Before the first reply to a number, unless that reply is the help message | `RidgeCast` | Help text |
@@ -105,6 +105,26 @@ message sent by a tracker has the tracker's name, as given in the request (see
 Every kind sent by a tracker uses the format of the request that created it,
 so a tracker created with `brief` sends brief daily forecasts and
 notifications. Errors and the help message are always in the full format.
+
+### Tracking ended
+
+A tracker is checked every hour, on the hour, and is deleted when it expires.
+Its last check is the last one before it expires: a tracker that expires at
+2:10 PM is last checked at 2:00 PM, and nothing checks it after that. That
+check ends the tracker, so it says `Tracking ended` rather than giving the
+expiry time, even though the tracker expires up to an hour later: no alert,
+avalanche forecast, or daily forecast is sent after it.
+
+- When the last check sends a daily forecast or a notification, `Tracking
+  ended` is the last line of its last message, which costs no extra message
+  when it fits.
+- When the last check has nothing else to send, `Tracking ended` is sent alone
+  as `(1/1) <tracker name>`.
+- The line is never dropped to stay within a limit. Forecast days are dropped
+  instead, as for the tracker line in a reply.
+- The reply that created the tracker already gave its expiry time. If the last
+  check's message is not delivered after its retries, there is no later check
+  to send it again.
 
 ## Full format
 
@@ -346,7 +366,8 @@ Limits per response:
 | Daily forecast | at most 3, or in the brief format more only when its alerts need more | today and the next 2 days |
 | Alert notifications | at most 9 | none |
 | Avalanche notifications | at most 2 | none |
-| Tracker ended, error, help | exactly 1 | none |
+| Tracker ended, when sent alone | exactly 1 | none |
+| Error, help | exactly 1 | none |
 
 Forecast days are the only lines dropped to stay within a limit. When the
 notices, avalanche, alerts, and tracker line alone need more than 9 messages,
@@ -417,7 +438,7 @@ only thing that says which one a message is about.
 | Daily forecast | The avalanche line, alerts, then today and the next 2 days. At most 3 messages unless its alerts need more, filled the same way as a brief reply |
 | Alert notification | The new alerts as brief alert lines, such as `!Sev Winter Storm Warning til We7 6PM`. Every new alert is sent, continuing in more messages and responses as in the full format |
 | Avalanche notification | `AV4 High` for a new forecast, `AV no rating`, `AV off season` for an off season loss, `AV no forecast` for any other loss, and `AV no forecast` then `AV may be old` for a loss to out of date data |
-| Tracker ended | `Tracking ended`, the same as the full format |
+| Tracker ended | `Tracking ended`, the same as the full format, as the last line of the last check's message or alone |
 
 ### Brief times
 
@@ -636,6 +657,15 @@ AV4 High
 
 ```
 (1/1) Mt Hood
+Tracking ended
+```
+
+The last check of a tracker named `Mt Hood` that finds a new alert ends the
+tracker in the same message:
+
+```
+(1/1) Mt Hood
+!Severe: Winter Storm Warning until Wed 10/7 6PM
 Tracking ended
 ```
 
