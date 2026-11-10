@@ -39,10 +39,9 @@ impl PhoneNumber {
         }
     }
 
-    // the full number, for the adapter sending to it. never log the result.
-    // unused until an adapter sends to a real number: the local provider only
-    // prints the masked number
-    #[allow(dead_code)]
+    // the full phone number, used for message sending,
+    // and for hashing in sms::user_numbers
+    // never log the result
     pub fn expose(&self) -> &str {
         &self.0
     }
