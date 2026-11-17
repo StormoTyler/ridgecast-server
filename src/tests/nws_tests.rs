@@ -547,6 +547,8 @@ fn gridpoints_test_data_deserializes() {
             .expect("the saved gridpoints response should deserialize into Forecast");
     let properties = forecast.properties;
     assert_eq!(properties.temperature.uom.as_deref(), Some("wmoUnit:degC"));
+    // the elevation's unit is named unitCode, not uom
+    assert_eq!(properties.elevation.uom.as_deref(), Some("wmoUnit:m"));
     // NWS sends heatRisk and pressure without a unit code
     assert_eq!(
         properties.heat_risk.expect("test data has heatRisk").uom,

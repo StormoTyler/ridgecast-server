@@ -319,6 +319,10 @@ pub struct Properties {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Elevation {
+    // the unit code, such as "wmoUnit:m". NWS names it unitCode here,
+    // not uom as in the forecast series
+    #[serde(rename = "unitCode", default)]
+    pub uom: Option<String>,
     pub value: Option<f32>,
 }
 

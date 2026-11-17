@@ -320,6 +320,7 @@ fn every_field_tuesday() -> forecast::RequestedForecast {
     ));
     forecast.elevation = Some(Elevation {
         value: Some(5240.0 * 0.3048),
+        uom: Some("wmoUnit:m".to_string()),
     });
     forecast.ice_accumulation = floats(
         "wmoUnit:mm",
@@ -735,6 +736,7 @@ fn elevation_is_only_in_the_first_day() {
     );
     forecast.elevation = Some(Elevation {
         value: Some(5240.0 * 0.3048),
+        uom: Some("wmoUnit:m".to_string()),
     });
     let flags = ForecastProperties {
         elevation: true,
@@ -935,6 +937,7 @@ fn brief_elevation_is_only_in_the_first_day() {
     );
     forecast.elevation = Some(Elevation {
         value: Some(5240.0 * 0.3048),
+        uom: Some("wmoUnit:m".to_string()),
     });
     let flags = ForecastProperties {
         elevation: true,

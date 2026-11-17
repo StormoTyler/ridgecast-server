@@ -28,6 +28,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 mod tracking;
+mod unit_conversion;
 use crate::models::{ForecastVars, UserPoint};
 use crate::sms::{reply, user_numbers};
 

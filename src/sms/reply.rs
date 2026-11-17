@@ -10,8 +10,9 @@ use chrono_tz::Tz;
 // local modules
 use crate::daily_forecast;
 use crate::errors;
-use crate::models::{Alert, AvyProperties, FloatVec, ForecastProperties, IntVec};
+use crate::models::{Alert, AvyProperties, Elevation, FloatVec, ForecastProperties, IntVec};
 use crate::sms::{forecast, request};
+use crate::unit_conversion;
 
 // ---- message limits, line order, and alert severity ----
 
@@ -31,8 +32,6 @@ pub const MAX_MESSAGES: usize = 9;
 // than one, so a forecast is less likely to be dropped entirely when alerts
 // take most of the first message
 pub const BRIEF_MAX_MESSAGES: usize = 3;
-
-const PASCALS_PER_INCH_OF_MERCURY: f64 = 3386.389;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Format {
@@ -451,11 +450,7 @@ pub fn forecast_days(
             // the elevation is the same every day, so only the first day has it
             day.first_day = offset == 0;
             if day.first_day {
-                day.elevation = forecast
-                    .elevation
-                    .as_ref()
-                    .and_then(|elevation| elevation.value)
-                    .map(|meters| f64::from(meters) / 0.3048);
+                day.elevation = forecast.elevation.as_ref().and_then(convert_elevation);
             }
             if !day.has_data() {
                 return None;
@@ -490,53 +485,6 @@ struct Interval {
     end: DateTime<Utc>,
     // None for a value NWS left out, such as a cloud ceiling when there is none
     value: Option<f64>,
-}
-
-// the units the reply uses
-#[derive(Debug, Clone, Copy)]
-enum Unit {
-    Fahrenheit,
-    Inches,
-    Feet,
-    Miles,
-    Mph,
-    InchesOfMercury,
-    Percent,
-    Degrees,
-    // a category without a unit, such as heat risk
-    Category,
-}
-
-impl Unit {
-    // converts a value with NWS's unit code to this unit. None for a unit
-    // code that can't be converted, so a value is never shown in the wrong unit
-    fn converter(self, uom: Option<&str>) -> Option<fn(f64) -> f64> {
-        let convert: fn(f64) -> f64 = match (self, uom) {
-            (Unit::Fahrenheit, Some("wmoUnit:degC")) => |celsius| celsius * 9.0 / 5.0 + 32.0,
-            (Unit::Fahrenheit, Some("wmoUnit:degF")) => |fahrenheit| fahrenheit,
-            (Unit::Inches, Some("wmoUnit:mm")) => |mm| mm / 25.4,
-            (Unit::Inches, Some("wmoUnit:cm")) => |cm| cm / 2.54,
-            (Unit::Feet, Some("wmoUnit:m")) => |meters| meters / 0.3048,
-            (Unit::Feet, Some("wmoUnit:ft")) => |feet| feet,
-            (Unit::Miles, Some("wmoUnit:m")) => |meters| meters / 1609.344,
-            (Unit::Miles, Some("wmoUnit:km")) => |km| km / 1.609344,
-            (Unit::Mph, Some("wmoUnit:km_h-1")) => |kmh| kmh / 1.609344,
-            (Unit::Mph, Some("wmoUnit:m_s-1")) => |ms| ms * 3600.0 / 1609.344,
-            // NWS sends pressure without a unit code, in pascals
-            (Unit::InchesOfMercury, None | Some("wmoUnit:Pa")) => {
-                |pascals| pascals / PASCALS_PER_INCH_OF_MERCURY
-            }
-            (Unit::InchesOfMercury, Some("wmoUnit:hPa")) => {
-                |hectopascals| hectopascals * 100.0 / PASCALS_PER_INCH_OF_MERCURY
-            }
-            (Unit::Percent, Some("wmoUnit:percent")) => |percent| percent,
-            (Unit::Degrees, Some("wmoUnit:degree_(angle)")) => |degrees| degrees,
-            // NWS sends heat risk, a category from 0 to 4, without a unit code
-            (Unit::Category, _) => |category| category,
-            _ => return None,
-        };
-        Some(convert)
-    }
 }
 
 // the forecast's series, converted once and then summarized for each day.
@@ -591,62 +539,82 @@ impl Series {
             max_temperature: floats(
                 "max_temperature",
                 Some(&forecast.max_temperature),
-                Unit::Fahrenheit,
+                unit_conversion::Unit::Fahrenheit,
             ),
             min_temperature: floats(
                 "min_temperature",
                 Some(&forecast.min_temperature),
-                Unit::Fahrenheit,
+                unit_conversion::Unit::Fahrenheit,
             ),
             wet_bulb_globe: floats(
                 "wet_bulb_globe_temperature",
                 forecast.wet_bulb_globe_temperature.as_ref(),
-                Unit::Fahrenheit,
+                unit_conversion::Unit::Fahrenheit,
             ),
-            heat_risk: ints("heat_risk", forecast.heat_risk.as_ref(), Unit::Category),
+            heat_risk: ints(
+                "heat_risk",
+                forecast.heat_risk.as_ref(),
+                unit_conversion::Unit::Category,
+            ),
             humidity: ints(
                 "relative_humidity",
                 forecast.relative_humidity.as_ref(),
-                Unit::Percent,
+                unit_conversion::Unit::Percent,
             ),
             precip_chance: ints(
                 "probability_of_precipitation",
                 Some(&forecast.probability_of_precipitation),
-                Unit::Percent,
+                unit_conversion::Unit::Percent,
             ),
             precip: floats(
                 "quantitative_precipitation",
                 Some(&forecast.quantitative_precipitation),
-                Unit::Inches,
+                unit_conversion::Unit::Inches,
             ),
             snow: floats(
                 "snowfall_amount",
                 Some(&forecast.snowfall_amount),
-                Unit::Inches,
+                unit_conversion::Unit::Inches,
             ),
-            snow_level: floats("snow_level", forecast.snow_level.as_ref(), Unit::Feet),
+            snow_level: floats(
+                "snow_level",
+                forecast.snow_level.as_ref(),
+                unit_conversion::Unit::Feet,
+            ),
             ice: floats(
                 "ice_accumulation",
                 Some(&forecast.ice_accumulation),
-                Unit::Inches,
+                unit_conversion::Unit::Inches,
             ),
-            wind_speed: floats("wind_speed", Some(&forecast.wind_speed), Unit::Mph),
+            wind_speed: floats(
+                "wind_speed",
+                Some(&forecast.wind_speed),
+                unit_conversion::Unit::Mph,
+            ),
             wind_direction: ints(
                 "wind_direction",
                 Some(&forecast.wind_direction),
-                Unit::Degrees,
+                unit_conversion::Unit::Degrees,
             ),
-            gust: floats("wind_gust", forecast.wind_gust.as_ref(), Unit::Mph),
-            visibility: floats("visibility", forecast.visibility.as_ref(), Unit::Miles),
+            gust: floats(
+                "wind_gust",
+                forecast.wind_gust.as_ref(),
+                unit_conversion::Unit::Mph,
+            ),
+            visibility: floats(
+                "visibility",
+                forecast.visibility.as_ref(),
+                unit_conversion::Unit::Miles,
+            ),
             pressure: floats(
                 "pressure",
                 forecast.pressure.as_ref(),
-                Unit::InchesOfMercury,
+                unit_conversion::Unit::InchesOfMercury,
             ),
             ceiling: floats(
                 "ceiling_height",
                 forecast.ceiling_height.as_ref(),
-                Unit::Feet,
+                unit_conversion::Unit::Feet,
             ),
         }
     }
@@ -757,7 +725,7 @@ impl DaySummary {
 fn convert_series<T>(
     field: &str,
     uom: Option<&str>,
-    unit: Unit,
+    unit: unit_conversion::Unit,
     values: &[T],
     read: impl Fn(&T) -> (&Option<String>, Option<f64>),
 ) -> Vec<Interval> {
@@ -779,6 +747,20 @@ fn convert_series<T>(
             })
         })
         .collect()
+}
+
+// converts the forecast grid cell's elevation to feet. one whose unit can't be
+// converted is logged and left out, like a series
+fn convert_elevation(elevation: &Elevation) -> Option<f64> {
+    let value = elevation.value?;
+    let uom = elevation.uom.as_deref();
+    let Some(convert) = unit_conversion::Unit::Feet.converter(uom) else {
+        tracing::warn!(
+            "sms_reply: elevation has unit {uom:?}, which can't be converted, leaving it out"
+        );
+        return None;
+    };
+    Some(convert(f64::from(value)))
 }
 
 // an NWS validTime such as "2026-10-06T13:00:00+00:00/PT1H" as its start and end
