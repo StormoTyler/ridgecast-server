@@ -68,7 +68,7 @@ Each bit corresponds to a field of the `ForecastVars` struct in
 | 0 | `0001` | `track_alerts` | Track this location and send new NWS alerts for it |
 | 1 | `0002` | `no_forecast` | Do not include a weather forecast in the reply |
 | 2 | `0004` | `track_avy` | Create an avalanche danger tracker for this location |
-| 3 | `0008` | `forecast_properties.elevation` | Include elevation |
+| 3 | `0008` | `forecast_properties.elevation` | Include the elevation of the NWS forecast grid cell, which the forecast is for, not the point's own elevation |
 | 4 | `0010` | `forecast_properties.wet_bulb_globe_temperature` | Include wet bulb globe temperature |
 | 5 | `0020` | `forecast_properties.heat_risk` | Include heat risk |
 | 6 | `0040` | `forecast_properties.relative_humidity` | Include relative humidity |
