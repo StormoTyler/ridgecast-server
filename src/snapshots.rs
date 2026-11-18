@@ -286,8 +286,11 @@ async fn fetch_avy(db: &database::DB) -> Result<AvalancheData, errors::APIError>
 }
 
 // swaps the stored snapshot in one operation, so a failed write
-// never leaves the collection empty
-async fn store_alerts(db: &database::DB, alerts: &AlertsSorted) -> Result<(), errors::APIError> {
+// never leaves the collection empty. pub(crate) for the database tests
+pub(crate) async fn store_alerts(
+    db: &database::DB,
+    alerts: &AlertsSorted,
+) -> Result<(), errors::APIError> {
     db.alerts_collection
         .replace_one(doc! {}, alerts)
         .upsert(true)
@@ -299,7 +302,10 @@ async fn store_alerts(db: &database::DB, alerts: &AlertsSorted) -> Result<(), er
         })
 }
 
-async fn store_avy(db: &database::DB, avy: &AvalancheData) -> Result<(), errors::APIError> {
+pub(crate) async fn store_avy(
+    db: &database::DB,
+    avy: &AvalancheData,
+) -> Result<(), errors::APIError> {
     db.avy_collection
         .replace_one(doc! {}, avy)
         .upsert(true)

@@ -1,9 +1,11 @@
 // tests for sms::inbound: what is done with an inbound message. sending is in
-// outbound_tests, and the forecast path needs MongoDB, so it isn't tested
+// outbound_tests. inbound::handle needs MongoDB, so its tests are ignored by
+// default (see test_db), and its forecast path calls NWS, so it isn't tested
 use crate::messaging;
-use crate::sms::{inbound, reply, request};
+use crate::sms::{inbound, reply, request, user_numbers};
 use crate::state;
 use crate::tests;
+use crate::tests::{fake_sender, test_db};
 
 const USER: &str = "+15415550123";
 const TOLL_FREE: &str = "+18005550100";
@@ -113,4 +115,121 @@ fn the_help_reply_is_not_sent_twice() {
     tests::set_support_email();
     let help = vec![vec![reply::help_message()]];
     assert_eq!(inbound::with_opt_in_message(true, help.clone()), help);
+}
+
+fn number_key() -> user_numbers::NumberKey {
+    user_numbers::NumberKey::from_value(Some("0123456789abcdef0123456789abcdef")).unwrap()
+}
+
+const INVALID_REQUEST: &str = "RC1 95.1 -121.6959 0000 0 1";
+
+fn parse_error() -> String {
+    let error = INVALID_REQUEST.parse::<request::SmsRequest>().unwrap_err();
+    reply::format_parse_error(&error)
+}
+
+// the bodies of the messages handle sent, in order
+fn bodies(deliveries: &[crate::sms::outbound::Delivery]) -> Vec<String> {
+    deliveries
+        .iter()
+        .map(|delivery| delivery.body.clone())
+        .collect()
+}
+
+// the opt-in message is its own message before the reply, sent from the number
+// the user texted, and only with a number's first text
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn a_numbers_first_text_gets_the_opt_in_message_once() {
+    tests::set_support_email();
+    let db = test_db::fresh("first_text").await;
+    let sender = fake_sender::FakeSender::default();
+    let message = text(LONG_CODE, INVALID_REQUEST);
+
+    let first = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
+    assert_eq!(bodies(&first), vec![reply::help_message(), parse_error()]);
+
+    let second = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
+    assert_eq!(bodies(&second), vec![parse_error()]);
+
+    for (from, to, _) in sender.attempts.lock().unwrap().iter() {
+        assert_eq!(from, &number(LONG_CODE));
+        assert_eq!(to, &number(USER));
+    }
+    test_db::remove(db).await;
+}
+
+// the help message is the opt-in message, so a first text that gets it as its
+// reply is sent it once, and is recorded as opted in
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn a_help_reply_counts_as_the_opt_in_message() {
+    tests::set_support_email();
+    let db = test_db::fresh("help_reply").await;
+    let sender = fake_sender::FakeSender::default();
+
+    let first = inbound::handle(
+        &text(TOLL_FREE, "hello"),
+        &numbers(),
+        &number_key(),
+        &db,
+        &sender,
+    )
+    .await;
+    assert_eq!(bodies(&first), vec![reply::help_message()]);
+
+    let second = inbound::handle(
+        &text(TOLL_FREE, INVALID_REQUEST),
+        &numbers(),
+        &number_key(),
+        &db,
+        &sender,
+    )
+    .await;
+    assert_eq!(bodies(&second), vec![parse_error()]);
+    test_db::remove(db).await;
+}
+
+// an opt-in message that wasn't delivered isn't recorded, so the number's next
+// text is sent it again
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn an_undelivered_opt_in_message_is_sent_again() {
+    tests::set_support_email();
+    let db = test_db::fresh("undelivered_opt_in").await;
+    let rejected = Err(messaging::SendError::Permanent("unreachable".to_string()));
+    let sender = fake_sender::FakeSender::scripted(vec![rejected]);
+    let message = text(TOLL_FREE, INVALID_REQUEST);
+
+    // a permanent failure stops the rest of the reply
+    let first = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
+    assert_eq!(bodies(&first), vec![reply::help_message()]);
+    assert!(first[0].result.is_err());
+
+    let second = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
+    assert_eq!(bodies(&second), vec![reply::help_message(), parse_error()]);
+    test_db::remove(db).await;
+}
+
+// a text to a number that isn't the server's sends nothing and records nothing
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn a_dropped_text_sends_and_records_nothing() {
+    tests::set_support_email();
+    let db = test_db::fresh("dropped_text").await;
+    let sender = fake_sender::FakeSender::default();
+
+    let deliveries = inbound::handle(
+        &text("+15035550199", "hello"),
+        &numbers(),
+        &number_key(),
+        &db,
+        &sender,
+    )
+    .await;
+
+    assert!(deliveries.is_empty());
+    assert!(sender.attempted().is_empty());
+    assert!(user_numbers::needs_opt_in_message(&db, &number_key(), &number(USER)).await);
+    test_db::remove(db).await;
 }

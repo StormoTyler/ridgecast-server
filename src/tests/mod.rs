@@ -1,4 +1,5 @@
 mod daily_forecast_tests;
+mod database_tests;
 mod fake_sender;
 mod inbound_tests;
 mod messaging_tests;
@@ -11,6 +12,7 @@ mod sms_reply_tests;
 mod sms_tests;
 mod snapshots_tests;
 mod state_tests;
+mod test_db;
 mod tracking_tests;
 mod user_numbers_tests;
 

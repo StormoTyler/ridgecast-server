@@ -1,8 +1,14 @@
-// tests for snapshots::is_stale and the fetched_at default of stored snapshots
+// tests for snapshots::is_stale and the fetched_at default of stored snapshots,
+// and for storing and loading snapshots, which needs MongoDB and is ignored by
+// default (see test_db). a loader's refresh calls NWS or NAC, so only loading
+// a fresh stored snapshot is tested
 use chrono::{DateTime, TimeDelta, Utc};
+use mongodb::bson::doc;
 
 use crate::models::{AlertsSorted, AvalancheData, RawFeatures, SkippedFeature, SkippedFeatures};
 use crate::snapshots;
+use crate::tests::{nac_tests, nws_tests, test_db};
+use crate::upstream::{nac, nws};
 
 #[test]
 fn test_snapshot_within_max_age_is_fresh() {
@@ -164,4 +170,168 @@ fn test_skipped_feature_round_trips_through_bson() {
     let read: SkippedFeature =
         bson::from_document(stored).expect("skipped feature should deserialize");
     assert_eq!(read.feature, skipped.features[0].feature);
+}
+
+// a minute ago, so the snapshot is fresh, without the part of a millisecond
+// MongoDB doesn't keep
+fn a_minute_ago() -> DateTime<Utc> {
+    let millis = (Utc::now() - TimeDelta::minutes(1)).timestamp_millis();
+    DateTime::from_timestamp_millis(millis).unwrap()
+}
+
+// a refresh would set a new fetched_at, so the stored one coming back means the
+// loader used the stored snapshot without calling NWS or NAC
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn a_fresh_stored_snapshot_is_loaded_without_a_refresh() {
+    let db = test_db::fresh("fresh_snapshot").await;
+    let fetched_at = a_minute_ago();
+    let alerts = AlertsSorted {
+        fetched_at,
+        ..AlertsSorted::default()
+    };
+    let avy = AvalancheData {
+        features: Vec::new(),
+        fetched_at,
+    };
+    snapshots::store_alerts(&db, &alerts).await.unwrap();
+    snapshots::store_avy(&db, &avy).await.unwrap();
+
+    let alerts = snapshots::load_alerts(&db).await.unwrap();
+    assert!(!alerts.stale);
+    assert_eq!(alerts.data.fetched_at, fetched_at);
+    let avy = snapshots::load_avy(&db).await.unwrap();
+    assert!(!avy.stale);
+    assert_eq!(avy.data.fetched_at, fetched_at);
+
+    test_db::remove(db).await;
+}
+
+// each snapshot is one document, replaced by the next
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn storing_a_snapshot_replaces_the_last() {
+    let db = test_db::fresh("replaced_snapshot").await;
+    let first = a_minute_ago() - TimeDelta::minutes(1);
+    let second = a_minute_ago();
+
+    for fetched_at in [first, second] {
+        let alerts = AlertsSorted {
+            fetched_at,
+            ..AlertsSorted::default()
+        };
+        let avy = AvalancheData {
+            features: Vec::new(),
+            fetched_at,
+        };
+        snapshots::store_alerts(&db, &alerts).await.unwrap();
+        snapshots::store_avy(&db, &avy).await.unwrap();
+    }
+
+    let alerts = db.alerts_collection.count_documents(doc! {}).await;
+    assert_eq!(alerts.expect("alerts should count"), 1);
+    let avy = db.avy_collection.count_documents(doc! {}).await;
+    assert_eq!(avy.expect("avalanche data should count"), 1);
+    let loaded = snapshots::load_alerts(&db).await.unwrap();
+    assert_eq!(loaded.data.fetched_at, second);
+    let loaded = snapshots::load_avy(&db).await.unwrap();
+    assert_eq!(loaded.data.fetched_at, second);
+
+    test_db::remove(db).await;
+}
+
+// what /health reads, without loading the snapshot
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn fetched_at_is_read_from_a_stored_snapshot() {
+    let db = test_db::fresh("read_fetched_at").await;
+    assert_eq!(
+        snapshots::read_fetched_at(&db.alerts_collection).await,
+        None
+    );
+    assert_eq!(snapshots::read_fetched_at(&db.avy_collection).await, None);
+
+    let fetched_at = a_minute_ago();
+    let alerts = AlertsSorted {
+        fetched_at,
+        ..AlertsSorted::default()
+    };
+    snapshots::store_alerts(&db, &alerts).await.unwrap();
+
+    assert_eq!(
+        snapshots::read_fetched_at(&db.alerts_collection).await,
+        Some(fetched_at)
+    );
+    test_db::remove(db).await;
+}
+
+// the saved NWS alerts match the same points after being stored and loaded, by
+// SAME code and by polygon, so a geometry isn't read back as a type that never matches
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn stored_alerts_match_points_as_before() {
+    let db = test_db::fresh("stored_alerts").await;
+    let mut alerts = nws_tests::load_alerts();
+    alerts.fetched_at = a_minute_ago();
+    snapshots::store_alerts(&db, &alerts).await.unwrap();
+
+    let loaded = snapshots::load_alerts(&db).await.unwrap().data;
+
+    assert_eq!(loaded.fetched_at, alerts.fetched_at);
+    assert_eq!(loaded.with_geometry.len(), alerts.with_geometry.len());
+    assert_eq!(loaded.by_same_code.len(), alerts.by_same_code.len());
+    let points = [
+        // Bozeman, MT: matched by SAME code
+        nws_tests::make_point(45.68, -111.04, "030031"),
+        // inside the Glynn, GA flood advisory polygon
+        nws_tests::make_point(31.15, -81.40, "999999"),
+        // on the polygon's edge
+        nws_tests::make_point(31.29, -81.37, "999999"),
+        // Eugene, OR: no alerts
+        nws_tests::make_point(44.05, -123.09, "041039"),
+    ];
+    for point in &points {
+        let before = nws::check_alerts(&alerts, point);
+        let after = nws::check_alerts(&loaded, point);
+        assert_eq!(nws_tests::ids(&after), nws_tests::ids(&before));
+    }
+    // the first three points each match an alert
+    assert_eq!(nws::check_alerts(&loaded, &points[2]).len(), 1);
+
+    test_db::remove(db).await;
+}
+
+// the saved NAC zones give the same forecast after being stored and loaded:
+// the geometry still matches and the dates keep their offsets
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn stored_avy_zones_match_points_as_before() {
+    let db = test_db::fresh("stored_avy").await;
+    let mut avy = nac_tests::load_avy();
+    avy.fetched_at = a_minute_ago();
+    snapshots::store_avy(&db, &avy).await.unwrap();
+
+    let loaded = snapshots::load_avy(&db).await.unwrap().data;
+
+    assert_eq!(loaded.features.len(), avy.features.len());
+    let now = nac_tests::test_now();
+    let points = [
+        // inside Swan Range, a polygon
+        nac_tests::make_point(48.08, -113.86),
+        // inside Mount Shasta, a multipolygon
+        nac_tests::make_point(41.40, -122.29),
+        // a vertex of the Swan Range boundary
+        nac_tests::make_point(48.310457276, -113.979234344),
+    ];
+    for point in &points {
+        let before = nac::check_avy_geometry(point, &avy, now).await;
+        let after = nac::check_avy_geometry(point, &loaded, now).await;
+        assert!(matches!(before, nac::ZoneForecast::Current(_)));
+        assert_eq!(after, before);
+    }
+    for (stored, read) in avy.features.iter().zip(&loaded.features) {
+        assert_eq!(read.properties, stored.properties);
+    }
+
+    test_db::remove(db).await;
 }

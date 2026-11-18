@@ -6,7 +6,7 @@ const USER: &str = "+15415550100";
 const SERVER: &str = "+18005550100";
 
 // a tracker with nothing but its numbers set to anything meaningful
-fn tracker() -> UserPoint {
+pub fn tracker() -> UserPoint {
     UserPoint {
         id: None,
         user: messaging::PhoneNumber::new(USER).unwrap(),

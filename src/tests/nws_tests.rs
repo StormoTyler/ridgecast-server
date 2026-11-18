@@ -16,7 +16,7 @@ const RED_FLAG_WARNING_ID: &str = "https://api.weather.gov/alerts/urn:oid:2.49.0
 const FLOOD_ADVISORY_ID: &str = "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.2ec9803dbea4b774a0cc081c7640d75ab17c11d5.001.1";
 
 // parses the test data the same way nws::get_alerts parses a live response
-fn load_alerts() -> AlertsSorted {
+pub fn load_alerts() -> AlertsSorted {
     let raw: RawFeatures =
         serde_json::from_str(TEST_DATA).expect("test data should be a geojson feature collection");
     nws::sort_alerts(nws::parse_alerts(raw).0)
@@ -39,7 +39,7 @@ fn raw_feature_ids(with_geometry: bool) -> HashSet<String> {
         .collect()
 }
 
-fn make_point(lat: f64, lon: f64, same_code: &str) -> Point {
+pub fn make_point(lat: f64, lon: f64, same_code: &str) -> Point {
     Point {
         properties: PointProperties {
             forecast_grid_data: "https://api.weather.gov/gridpoints/TEST/1,1".to_string(),
@@ -58,7 +58,7 @@ fn make_point(lat: f64, lon: f64, same_code: &str) -> Point {
     }
 }
 
-fn ids(alerts: &[Alert]) -> Vec<&str> {
+pub fn ids(alerts: &[Alert]) -> Vec<&str> {
     alerts
         .iter()
         .filter_map(|alert| alert.id.as_deref())

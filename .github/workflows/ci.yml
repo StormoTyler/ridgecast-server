@@ -13,6 +13,12 @@ jobs:
   check:
     name: Format, lint, and test
     runs-on: ubuntu-latest
+    # for the tests of code that needs a database, which a plain `cargo test` ignores
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
     steps:
       - uses: actions/checkout@v4
 
@@ -30,7 +36,10 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      # the tests use saved API responses, so they need neither MongoDB,
-      # network access, nor the .env variables
+      # the tests use saved API responses, so they need neither network access
+      # nor the .env variables. --include-ignored also runs the database tests,
+      # each in its own database on the MongoDB service above
       - name: Test
-        run: cargo test
+        run: cargo test -- --include-ignored
+        env:
+          TEST_DATABASE_URL: mongodb://127.0.0.1:27017

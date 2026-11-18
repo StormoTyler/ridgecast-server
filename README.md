@@ -83,6 +83,7 @@ are current, for uptime monitors.
 cargo fmt         # format; CI rejects unformatted code
 cargo clippy --all-targets -- -D warnings
 cargo test        # uses saved API responses, needs no MongoDB or network
+TEST_DATABASE_URL=mongodb://127.0.0.1:27018 cargo test -- --include-ignored   # also the database tests, which need MongoDB, TEST_DATABASE_URL should be different than the DATABASE_URL set in .env
 ```
 
 CI runs all three on every push and pull request to `main`. To catch

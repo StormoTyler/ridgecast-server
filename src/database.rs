@@ -37,12 +37,17 @@ impl DB {
         // both are checked at startup in main
         let mongodb_uri = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
         let database_name = std::env::var("RIDGECAST_DB").expect("RIDGECAST_DB must be set");
+        Self::connect(&mongodb_uri, &database_name).await
+    }
 
+    // connects to the named database and creates its indexes. apart from init,
+    // which reads the environment, so each database test can use its own database
+    pub async fn connect(mongodb_uri: &str, database_name: &str) -> Result<Self> {
         let mut client_options = ClientOptions::parse(mongodb_uri).await?;
-        client_options.app_name = Some(database_name.clone());
+        client_options.app_name = Some(database_name.to_string());
 
         let client = Client::with_options(client_options)?;
-        let database = client.database(database_name.as_str());
+        let database = client.database(database_name);
 
         // pinging the database
         database.run_command(doc! { "ping": 1 }).await?;

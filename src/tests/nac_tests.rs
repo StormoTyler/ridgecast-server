@@ -22,7 +22,7 @@ const FORECAST_ZONE: &str = "Tetons";
 
 // every forecast in the test data has started and none has ended
 // (starts run to 2026-10-02 22:49, ends from 2026-10-31 08:00 UTC)
-fn test_now() -> DateTime<Utc> {
+pub fn test_now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 10, 3, 0, 0, 0).unwrap()
 }
 
@@ -32,7 +32,7 @@ fn after_tetons_end() -> DateTime<Utc> {
 }
 
 // parses the test data the same way nac::get_avy parses a live response
-fn load_avy() -> AvalancheData {
+pub fn load_avy() -> AvalancheData {
     let raw: RawFeatures =
         serde_json::from_str(TEST_DATA).expect("test data should be a geojson feature collection");
     let (features, _): (Vec<AvyArea>, _) = raw.parse("NAC test data");
@@ -50,7 +50,7 @@ fn find_zone<'a>(avy: &'a AvalancheData, name: &str) -> &'a AvyArea {
         .unwrap_or_else(|| panic!("test data should contain {name}"))
 }
 
-fn make_point(lat: f64, lon: f64) -> Point {
+pub fn make_point(lat: f64, lon: f64) -> Point {
     Point {
         properties: PointProperties {
             forecast_grid_data: "https://api.weather.gov/gridpoints/TEST/1,1".to_string(),
