@@ -1,7 +1,7 @@
 // the users' phone numbers: the server's only record of which numbers have used
-// it, and whether each has been sent the opt-in message (the help message, with
-// the contact address and how to opt out), so that is sent once per number
-// rather than with every reply. a number is stored only as an HMAC under
+// it, and whether each has been sent the opt-in message (reply::opt_in_message:
+// what is sent, how often, the rates, and HELP and STOP), so that is sent once
+// per number rather than with every reply. a number is stored only as an HMAC under
 // USER_NUMBERS_KEY, so a leaked database doesn't reveal which numbers used the
 // service. each text from a number refreshes its record, which MongoDB deletes
 // database::USER_NUMBER_TTL after the number last texted

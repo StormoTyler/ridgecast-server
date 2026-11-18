@@ -57,17 +57,13 @@ fn a_request_is_answered_from_the_number_it_was_sent_to() {
 
 #[test]
 fn a_message_that_isnt_a_request_gets_the_help_message() {
-    tests::set_support_email();
-    let plan = inbound::plan(&text(LONG_CODE, "hello"), &numbers());
-    let inbound::Plan::Reply {
-        reply_from,
-        message,
-    } = plan
-    else {
-        panic!("a message that isn't a request should get the help message");
-    };
-    assert_eq!(reply_from, number(LONG_CODE));
-    assert!(message.contains(&format!("Help: {}", tests::SUPPORT_EMAIL)));
+    for body in ["HELP", "hello"] {
+        let plan = inbound::plan(&text(LONG_CODE, body), &numbers());
+        let inbound::Plan::Help { reply_from } = plan else {
+            panic!("{body} isn't a request, so it should get the help message");
+        };
+        assert_eq!(reply_from, number(LONG_CODE));
+    }
 }
 
 #[test]
@@ -93,28 +89,17 @@ fn forecast_reply() -> Vec<Vec<String>> {
 // before the reply
 #[test]
 fn the_opt_in_message_comes_first_when_needed() {
-    tests::set_support_email();
     let responses = inbound::with_opt_in_message(true, forecast_reply());
-    assert_eq!(responses[0], vec![reply::help_message()]);
+    assert_eq!(responses[0], vec![reply::opt_in_message()]);
     assert_eq!(responses[1..], forecast_reply()[..]);
 }
 
 #[test]
 fn the_opt_in_message_is_left_out_once_sent() {
-    tests::set_support_email();
     assert_eq!(
         inbound::with_opt_in_message(false, forecast_reply()),
         forecast_reply()
     );
-}
-
-// a first text that isn't a request gets the help message, which is the
-// opt-in message, so it isn't sent twice
-#[test]
-fn the_help_reply_is_not_sent_twice() {
-    tests::set_support_email();
-    let help = vec![vec![reply::help_message()]];
-    assert_eq!(inbound::with_opt_in_message(true, help.clone()), help);
 }
 
 fn number_key() -> user_numbers::NumberKey {
@@ -147,7 +132,7 @@ async fn a_numbers_first_text_gets_the_opt_in_message_once() {
     let message = text(LONG_CODE, INVALID_REQUEST);
 
     let first = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
-    assert_eq!(bodies(&first), vec![reply::help_message(), parse_error()]);
+    assert_eq!(bodies(&first), vec![reply::opt_in_message(), parse_error()]);
 
     let second = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
     assert_eq!(bodies(&second), vec![parse_error()]);
@@ -159,26 +144,30 @@ async fn a_numbers_first_text_gets_the_opt_in_message_once() {
     test_db::remove(db).await;
 }
 
-// the help message is the opt-in message, so a first text that gets it as its
-// reply is sent it once, and is recorded as opted in
+// a first text that isn't a request, such as HELP, gets only the help message,
+// since asking for help isn't asking for forecasts or alerts. it doesn't count
+// as the opt-in, so the number's first request still gets the opt-in message
 #[tokio::test]
 #[ignore = "needs MongoDB"]
-async fn a_help_reply_counts_as_the_opt_in_message() {
+async fn help_is_sent_without_the_opt_in_message() {
     tests::set_support_email();
     let db = test_db::fresh("help_reply").await;
     let sender = fake_sender::FakeSender::default();
 
-    let first = inbound::handle(
-        &text(TOLL_FREE, "hello"),
-        &numbers(),
-        &number_key(),
-        &db,
-        &sender,
-    )
-    .await;
-    assert_eq!(bodies(&first), vec![reply::help_message()]);
+    for _ in 0..2 {
+        let help = inbound::handle(
+            &text(TOLL_FREE, "HELP"),
+            &numbers(),
+            &number_key(),
+            &db,
+            &sender,
+        )
+        .await;
+        assert_eq!(bodies(&help), vec![reply::help_message()]);
+        assert!(user_numbers::needs_opt_in_message(&db, &number_key(), &number(USER)).await);
+    }
 
-    let second = inbound::handle(
+    let request = inbound::handle(
         &text(TOLL_FREE, INVALID_REQUEST),
         &numbers(),
         &number_key(),
@@ -186,7 +175,10 @@ async fn a_help_reply_counts_as_the_opt_in_message() {
         &sender,
     )
     .await;
-    assert_eq!(bodies(&second), vec![parse_error()]);
+    assert_eq!(
+        bodies(&request),
+        vec![reply::opt_in_message(), parse_error()]
+    );
     test_db::remove(db).await;
 }
 
@@ -203,11 +195,14 @@ async fn an_undelivered_opt_in_message_is_sent_again() {
 
     // a permanent failure stops the rest of the reply
     let first = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
-    assert_eq!(bodies(&first), vec![reply::help_message()]);
+    assert_eq!(bodies(&first), vec![reply::opt_in_message()]);
     assert!(first[0].result.is_err());
 
     let second = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
-    assert_eq!(bodies(&second), vec![reply::help_message(), parse_error()]);
+    assert_eq!(
+        bodies(&second),
+        vec![reply::opt_in_message(), parse_error()]
+    );
     test_db::remove(db).await;
 }
 

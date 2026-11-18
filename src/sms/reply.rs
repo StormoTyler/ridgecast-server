@@ -877,7 +877,7 @@ pub fn set_support_email(value: Option<&str>) -> Result<(), String> {
 }
 
 // the help message's text, which toll-free verification requires of the HELP
-// response. it is also the opt-in message, sent once before a number's first reply
+// response
 fn help_line(email: &str) -> String {
     format!("Help: {email}. Reply STOP to opt out.")
 }
@@ -890,16 +890,28 @@ fn help() -> String {
     )
 }
 
-// the help message, a single message. inbound sends it as the opt-in message too
+// the help message, a single message
 pub fn help_message() -> String {
     single_message(help())
+}
+
+// the opt-in message's text: what the service sends, how often, that rates may
+// apply, and how to get help or opt out, which toll-free verification requires
+// of the opt-in confirmation. no final period, so it fits in BODY_LENGTH
+const OPT_IN: &str = "Forecasts you request and tracker alerts. Msg freq varies. \
+    Msg&data rates may apply. Reply HELP for help, STOP to opt out";
+
+// the opt-in message, a single message that inbound sends once, before the
+// reply to a number's first text
+pub fn opt_in_message() -> String {
+    single_message(OPT_IN.to_string())
 }
 
 // the reply to a request that could not be read, a single message. a message
 // that is not a request at all gets the help message
 pub fn format_parse_error(error: &request::SmsParseError) -> String {
     let line = match error {
-        request::SmsParseError::NotARequest => help(),
+        request::SmsParseError::NotARequest => return help_message(),
         request::SmsParseError::UnsupportedVersion(_) => "Update the RidgeCast app".to_string(),
         request::SmsParseError::WrongFieldCount(count) => {
             format!("Expected 6 fields, found {count}")

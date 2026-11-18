@@ -17,7 +17,13 @@ pub enum Plan {
     // not sent to one of this server's numbers, such as another number on the
     // same provider account: logged and dropped, with no reply
     Drop,
-    // a reply that needs no forecast: the help message or a parse error
+    // a message that isn't a request, such as HELP: answered with the help
+    // message alone, without the opt-in message, since asking for help isn't
+    // asking for forecasts or alerts
+    Help {
+        reply_from: messaging::PhoneNumber,
+    },
+    // a reply to a request that couldn't be read: its parse error
     Reply {
         reply_from: messaging::PhoneNumber,
         message: String,
@@ -41,6 +47,7 @@ pub fn plan(message: &messaging::InboundMessage, numbers: &state::Numbers) -> Pl
             reply_from,
             request,
         },
+        Err(request::SmsParseError::NotARequest) => Plan::Help { reply_from },
         Err(error) => Plan::Reply {
             reply_from,
             message: reply::format_parse_error(&error),
@@ -51,7 +58,8 @@ pub fn plan(message: &messaging::InboundMessage, numbers: &state::Numbers) -> Pl
 // handles one inbound message and returns what was sent, in order. empty when the
 // message was dropped. the clock is read once here, so the forecast, the tracker,
 // and the reply all use the same time. a number with no record gets
-// the opt-in message first, and every message that isn't dropped refreshes the
+// the opt-in message before the reply to a request, readable or not, but not
+// before the help message, and every message that isn't dropped refreshes the
 // number's record
 pub async fn handle(
     message: &messaging::InboundMessage,
@@ -61,7 +69,8 @@ pub async fn handle(
     sender: &dyn messaging::MessageSender,
 ) -> Vec<outbound::Delivery> {
     let now = Utc::now();
-    let (reply_from, responses) = match plan(message, numbers) {
+    // whether the reply is one the opt-in message goes before
+    let (reply_from, responses, opt_in_applies) = match plan(message, numbers) {
         Plan::Drop => {
             // no numbers in the log, a message to the wrong number is still a user's text
             tracing::warn!(
@@ -70,38 +79,39 @@ pub async fn handle(
             );
             return Vec::new();
         }
+        Plan::Help { reply_from } => (reply_from, vec![vec![reply::help_message()]], false),
         Plan::Reply {
             reply_from,
             message,
-        } => (reply_from, vec![vec![message]]),
+        } => (reply_from, vec![vec![message]], true),
         Plan::Forecast {
             reply_from,
             request,
         } => {
             let responses = forecast_reply(&request, message, &reply_from, db, now).await;
-            (reply_from, responses)
+            (reply_from, responses, true)
         }
     };
-    let needs_opt_in = user_numbers::needs_opt_in_message(db, number_key, &message.from).await;
+    let needs_opt_in =
+        opt_in_applies && user_numbers::needs_opt_in_message(db, number_key, &message.from).await;
     let responses = with_opt_in_message(needs_opt_in, responses);
     let deliveries = outbound::send_responses(sender, &reply_from, &message.from, &responses).await;
-    // the help message is the opt-in message, whether it was added or was the reply
-    let help = reply::help_message();
+    let opt_in = reply::opt_in_message();
     let sent_opt_in = deliveries
         .iter()
-        .any(|delivery| delivery.body == help && delivery.result.is_ok());
+        .any(|delivery| delivery.body == opt_in && delivery.result.is_ok());
     user_numbers::record_use(db, number_key, &message.from, sent_opt_in, now).await;
     deliveries
 }
 
-// the opt-in message goes before the reply as its own (1/1) message. a reply
-// that is the help message already has the same text, so it isn't sent twice
+// the opt-in message goes before the reply as its own (1/1) message
 pub fn with_opt_in_message(needs_opt_in: bool, responses: Vec<Vec<String>>) -> Vec<Vec<String>> {
-    let help = reply::help_message();
-    if !needs_opt_in || responses.iter().flatten().any(|message| *message == help) {
+    if !needs_opt_in {
         return responses;
     }
-    std::iter::once(vec![help]).chain(responses).collect()
+    std::iter::once(vec![reply::opt_in_message()])
+        .chain(responses)
+        .collect()
 }
 
 // the reply to a request, as responses of messages, or a one-message error if the

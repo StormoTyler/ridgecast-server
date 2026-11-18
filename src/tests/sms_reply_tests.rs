@@ -1445,6 +1445,27 @@ fn a_message_that_isnt_a_request_gets_the_help_message() {
     assert!(message.len() <= reply::MESSAGE_LENGTH);
 }
 
+#[test]
+fn the_opt_in_message_says_what_is_sent_and_how_to_opt_out() {
+    let message = reply::opt_in_message();
+    assert_eq!(
+        message,
+        "(1/1) RidgeCast\nForecasts you request and tracker alerts. Msg freq varies. \
+         Msg&data rates may apply. Reply HELP for help, STOP to opt out"
+    );
+    let body = message.strip_prefix("(1/1) RidgeCast").unwrap();
+    assert!(body.chars().count() <= reply::BODY_LENGTH);
+    assert!(message.chars().count() <= reply::MESSAGE_LENGTH);
+}
+
+// the help reply and the opt-in message are separate messages, so recording
+// the opt-in as sent can't be set off by a help reply
+#[test]
+fn the_opt_in_message_is_not_the_help_message() {
+    tests::set_support_email();
+    assert_ne!(reply::opt_in_message(), reply::help_message());
+}
+
 // each of these fails before the address is kept, so it doesn't change the
 // address the other tests set
 #[test]
