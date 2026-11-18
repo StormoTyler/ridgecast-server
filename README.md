@@ -63,6 +63,13 @@ cargo run               # serves on 127.0.0.1:5001
 See `.env.example` for each variable. The server stops at startup if one is
 missing or invalid.
 
+A MongoDB that isn't on the same machine must be reached over TLS, with its
+certificate checked: add `tls=true` to `DATABASE_URL`, or use a
+`mongodb+srv://` URI, which turns TLS on by default. Otherwise the server
+refuses to start. Only `localhost`, `127.x.x.x`, `::1`, and Unix sockets count
+as the same machine. That includes Docker: a MongoDB reached by a Compose
+service name, such as `mongodb://mongodb:27017`, needs TLS too.
+
 With `SMS_PROVIDER=local`, send a text over HTTP and get the reply back:
 
 ```bash

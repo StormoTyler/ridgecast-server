@@ -2,9 +2,11 @@ use mongodb::{
     Client, Collection, IndexModel,
     bson::doc,
     error::Result,
-    options::{ClientOptions, IndexOptions},
+    options::{ClientOptions, IndexOptions, ServerAddress, Tls},
 };
+use std::net::IpAddr;
 use std::time::Duration;
+use thiserror::Error;
 
 // local modules
 use crate::models::{
@@ -32,8 +34,24 @@ pub struct DB {
     pub skipped_features_collection: Collection<SkippedFeature>,
 }
 
+// why the server couldn't connect to MongoDB. neither variant's message includes
+// the URI, which can hold the database password
+#[derive(Debug, Error)]
+pub enum ConnectError {
+    #[error(transparent)]
+    Mongo(#[from] mongodb::error::Error),
+    // the privacy policy promises encrypted connections between services, so a
+    // database on another machine is only reached over TLS with its certificate checked
+    #[error(
+        "a MongoDB that isn't on this machine needs TLS: add tls=true to the URI or use a \
+         mongodb+srv:// URI, and leave certificate checks on (no tlsInsecure or \
+         tlsAllowInvalidCertificates)"
+    )]
+    Unencrypted,
+}
+
 impl DB {
-    pub async fn init() -> Result<Self> {
+    pub async fn init() -> std::result::Result<Self, ConnectError> {
         // both are checked at startup in main
         let mongodb_uri = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
         let database_name = std::env::var("RIDGECAST_DB").expect("RIDGECAST_DB must be set");
@@ -41,9 +59,14 @@ impl DB {
     }
 
     // connects to the named database and creates its indexes. apart from init,
-    // which reads the environment, so each database test can use its own database
-    pub async fn connect(mongodb_uri: &str, database_name: &str) -> Result<Self> {
+    // which reads the environment, so each database test can use its own database.
+    // the URI is checked for TLS before anything is sent to the server
+    pub async fn connect(
+        mongodb_uri: &str,
+        database_name: &str,
+    ) -> std::result::Result<Self, ConnectError> {
         let mut client_options = ClientOptions::parse(mongodb_uri).await?;
+        check_tls(&client_options)?;
         client_options.app_name = Some(database_name.to_string());
 
         let client = Client::with_options(client_options)?;
@@ -136,6 +159,37 @@ impl DB {
             invalid_avy_areas_collection,
             skipped_features_collection,
         })
+    }
+}
+
+// a database on this machine may be reached without TLS, any other only over TLS
+// with its certificate checked. the hostname is always checked: the driver's TLS
+// here (rustls) has no option to skip it. read from the parsed options, so a
+// mongodb+srv:// URI, which turns TLS on unless it says tls=false, passes
+// without tls=true. a URI naming several hosts passes only if every connection
+// to them would
+pub fn check_tls(options: &ClientOptions) -> std::result::Result<(), ConnectError> {
+    if options.hosts.iter().all(is_on_this_machine) {
+        return Ok(());
+    }
+    match &options.tls {
+        Some(Tls::Enabled(tls)) if tls.allow_invalid_certificates != Some(true) => Ok(()),
+        _ => Err(ConnectError::Unencrypted),
+    }
+}
+
+// localhost, a loopback address, or a Unix socket. names are compared as
+// written, never looked up, so a name that resolves to this machine still needs TLS
+fn is_on_this_machine(address: &ServerAddress) -> bool {
+    match address {
+        ServerAddress::Tcp { host, .. } => {
+            let host = host.trim_start_matches('[').trim_end_matches(']');
+            host.eq_ignore_ascii_case("localhost")
+                || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+        }
+        ServerAddress::Unix { .. } => true,
+        // an address kind added in a later driver version counts as another machine
+        _ => false,
     }
 }
 

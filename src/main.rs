@@ -61,7 +61,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     reply::set_support_email(std::env::var("SUPPORT_EMAIL").ok().as_deref())?;
     let provider = sms_providers::from_env()?;
 
-    let db = database::DB::init().await?;
+    // a string, so a refused unencrypted connection prints its message rather than the variant
+    let db = database::DB::init().await.map_err(|e| e.to_string())?;
 
     // bound before anything is spawned, so a server that can't listen, such as when
     // another one already holds the port, exits without starting refreshes that it

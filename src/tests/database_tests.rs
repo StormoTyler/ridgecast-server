@@ -120,3 +120,84 @@ async fn a_saved_tracker_is_read_back_with_its_id() {
 
     test_db::remove(db).await;
 }
+
+// whether a URI passes database::check_tls. parsing a mongodb:// URI needs no
+// server or network, so these tests aren't ignored
+async fn tls_allowed(uri: &str) -> bool {
+    let options = mongodb::options::ClientOptions::parse(uri)
+        .await
+        .unwrap_or_else(|e| panic!("{uri} should parse: {e}"));
+    database::check_tls(&options).is_ok()
+}
+
+#[tokio::test]
+async fn a_database_on_this_machine_needs_no_tls() {
+    for uri in [
+        "mongodb://localhost:27017",
+        "mongodb://LOCALHOST",
+        "mongodb://127.0.0.1:27018",
+        "mongodb://127.0.0.2",
+        "mongodb://[::1]:27017",
+        "mongodb://user:secret@127.0.0.1:27017/?authSource=admin",
+        "mongodb://%2Ftmp%2Fmongodb-27017.sock",
+    ] {
+        assert!(tls_allowed(uri).await, "{uri} should be allowed");
+    }
+}
+
+#[tokio::test]
+async fn another_machine_is_reached_only_over_tls() {
+    assert!(tls_allowed("mongodb://db.example.com:27017/?tls=true").await);
+    assert!(tls_allowed("mongodb://db.example.com:27017/?ssl=true").await);
+    assert!(tls_allowed("mongodb://10.0.0.5:27017/?tls=true").await);
+    for uri in [
+        "mongodb://db.example.com:27017",
+        "mongodb://db.example.com:27017/?tls=false",
+        // a Docker service name isn't this machine either
+        "mongodb://mongodb:27017",
+        "mongodb://10.0.0.5:27017",
+        "mongodb://192.168.1.20:27017",
+        // one remote host among local ones is still reached without TLS
+        "mongodb://127.0.0.1:27017,db.example.com:27017",
+    ] {
+        assert!(!tls_allowed(uri).await, "{uri} should be refused");
+    }
+}
+
+// TLS without checking the certificate can be impersonated, so it isn't enough
+#[tokio::test]
+async fn tls_without_certificate_checks_is_refused() {
+    for uri in [
+        "mongodb://db.example.com:27017/?tls=true&tlsInsecure=true",
+        "mongodb://db.example.com:27017/?tls=true&tlsAllowInvalidCertificates=true",
+    ] {
+        assert!(!tls_allowed(uri).await, "{uri} should be refused");
+    }
+}
+
+// the URI can hold the database password, so the refusal never repeats it
+#[tokio::test]
+async fn the_refusal_leaves_the_uri_out() {
+    let uri = "mongodb://ridgecast:hunter2@db.example.com:27017";
+    let options = mongodb::options::ClientOptions::parse(uri).await.unwrap();
+    let error = database::check_tls(&options).unwrap_err().to_string();
+    assert!(!error.contains("hunter2"));
+    assert!(!error.contains("db.example.com"));
+}
+
+// the check runs before anything is sent, so a refused URI fails at once even
+// with no server there
+#[tokio::test]
+async fn connect_refuses_an_unencrypted_remote_database() {
+    let result = database::DB::connect("mongodb://db.example.com:27017", "ridgecast").await;
+    assert!(matches!(result, Err(database::ConnectError::Unencrypted)));
+}
+
+// the driver's TLS here (rustls) always checks the hostname, and it refuses the
+// URI option that would turn that off, so check_tls needn't look for it. if this
+// fails, the driver accepts the option and check_tls must refuse it
+#[tokio::test]
+async fn skipping_hostname_checks_is_refused_by_the_driver() {
+    let uri = "mongodb://db.example.com:27017/?tls=true&tlsAllowInvalidHostnames=true";
+    assert!(mongodb::options::ClientOptions::parse(uri).await.is_err());
+}
