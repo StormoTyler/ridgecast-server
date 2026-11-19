@@ -1,22 +1,18 @@
 use axum::{
     Json, Router,
-    extract::{Query, State},
-    http::{HeaderValue, StatusCode},
+    extract::State,
+    http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::get,
 };
 use mongodb::bson::doc;
-use serde::Deserialize;
 use serde_json::json;
 use std::time::Duration;
 
 // local modules
-mod upstream;
-use crate::upstream::nws;
+mod daily_forecast;
 mod database;
 mod errors;
-use crate::models::Snapshot;
-mod daily_forecast;
 mod geometry;
 mod messaging;
 mod models;
@@ -29,7 +25,7 @@ mod state;
 mod tests;
 mod tracking;
 mod unit_conversion;
-use crate::models::{ForecastVars, UserPoint};
+mod upstream;
 use crate::sms::{reply, user_numbers};
 
 #[tokio::main]
@@ -109,19 +105,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 // dev route, so the router never names a provider
 fn app(state: state::AppState, provider_routes: Router<state::AppState>) -> Router {
     Router::new()
-        .route("/", get(homepage))
         .route("/health", get(health))
-        .route("/forecast", get(new_forecast))
-        .route("/forecast/scheduled", post(schedule_forecast))
-        .route("/alerts", get(get_alerts))
-        .route("/check-alerts", get(check_alerts))
-        .route("/get-avy", get(get_avy))
-        .route("/check-avy", get(check_avy))
         .merge(provider_routes)
         .with_state(state)
 }
-
-async fn homepage() {}
 
 // a snapshot only fails the health check once it is this far past its max age.
 // the scheduler refreshes alerts every ALERTS_MAX_AGE, so the snapshot passes its
@@ -171,124 +158,3 @@ async fn health(State(db): State<database::DB>) -> Response {
     });
     (status_code, Json(body)).into_response()
 }
-
-async fn new_forecast(State(db): State<database::DB>) -> Response {
-    let Snapshot {
-        data: alerts,
-        stale,
-    } = match snapshots::load_alerts(&db).await {
-        Ok(snapshot) => snapshot,
-        Err(e) => return e.into_response(),
-    };
-
-    let forecast = match nws::get_forecast(44.0, -123.0, &alerts).await {
-        Ok(result) => result,
-        Err(e) => {
-            eprintln!("new_forecast: failed to get forecast: {e}");
-            return if e.is_timeout() {
-                errors::APIError::UpstreamTimeout
-            } else {
-                errors::APIError::ForecastError
-            }
-            .into_response();
-        }
-    };
-    //println!("{:?}", forecast);
-
-    let user_point = UserPoint {
-        id: None,
-        // placeholders, only to keep this stub compiling: the route will be rewritten
-        user: messaging::PhoneNumber::new("+10000000000").expect("placeholder is E.164"),
-        reply_from: messaging::PhoneNumber::new("+10000000000").expect("placeholder is E.164"),
-        tracker_name: None,
-        // all options off: forecast only, no alert tracking
-        forecast_vars: ForecastVars::default(),
-        point: forecast.point.clone(),
-        avy: None,
-        avy_lost: Default::default(),
-        avy_off_season: Default::default(),
-        time_added: chrono::Utc::now(),
-        valid_duration: 0,
-        expires_at: chrono::Utc::now(),
-        next_daily_forecast: None,
-    };
-    if let Err(e) = database::add_tracker(&user_point, &db).await {
-        eprintln!("new_forecast: failed to save user point: {e}");
-        return errors::APIError::DatabaseError.into_response();
-    }
-    with_stale_header(Json(forecast).into_response(), stale)
-}
-
-async fn schedule_forecast() {}
-
-async fn get_alerts(State(db): State<database::DB>) -> Response {
-    match snapshots::refresh_alerts(&db).await {
-        Ok(alerts) => Json(alerts).into_response(),
-        Err(e) => e.into_response(),
-    }
-}
-
-// marks a response built from a snapshot that could not be refreshed,
-// the header is left off fresh responses so their JSON and headers are unchanged
-fn with_stale_header(mut response: Response, stale: bool) -> Response {
-    if stale {
-        response
-            .headers_mut()
-            .insert("x-snapshot-stale", HeaderValue::from_static("true"));
-    }
-    response
-}
-
-#[derive(Debug, Deserialize)]
-struct Location {
-    lat: f32,
-    lon: f32,
-}
-
-// GET /check-alerts?lat=44.0512&lon=-123.0921
-async fn check_alerts(
-    State(db): State<database::DB>,
-    Query(location): Query<Location>,
-) -> Response {
-    let Location { lat, lon } = location;
-    // f32 parsing also accepts "NaN" and "inf", which fail is_finite
-    if !(lat.is_finite() && lon.is_finite() && lat.abs() <= 90.0 && lon.abs() <= 180.0) {
-        return errors::APIError::InvalidLocation.into_response();
-    }
-
-    // load the snapshot first, so an unavailable snapshot fails without
-    // calling the NWS points endpoint
-    let Snapshot {
-        data: alerts,
-        stale,
-    } = match snapshots::load_alerts(&db).await {
-        Ok(snapshot) => snapshot,
-        Err(e) => return e.into_response(),
-    };
-
-    let point = match nws::get_point(lat, lon).await {
-        Ok(point) => point,
-        Err(e) if e.is_not_found() => return errors::APIError::LocationNotCovered.into_response(),
-        Err(e) => {
-            eprintln!("check_alerts: failed to get point {lat},{lon}: {e}");
-            return if e.is_timeout() {
-                errors::APIError::UpstreamTimeout
-            } else {
-                errors::APIError::NWSError
-            }
-            .into_response();
-        }
-    };
-
-    let active_alerts = nws::check_alerts(&alerts, &point);
-    with_stale_header(Json(active_alerts).into_response(), stale)
-}
-
-async fn get_avy(State(db): State<database::DB>) -> Response {
-    match snapshots::refresh_avy(&db).await {
-        Ok(avy) => Json(avy).into_response(),
-        Err(e) => e.into_response(),
-    }
-}
-
-async fn check_avy() {}
