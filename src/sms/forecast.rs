@@ -244,9 +244,7 @@ pub async fn get_requested_forecast(
         }
     };
 
-    // the point is needed for alerts and trackers even without a forecast. it
-    // is fetched here rather than through nws::get_forecast, so a 404 from
-    // /points (not covered) can be told apart from one from gridpoints
+    // the point is needed for alerts and trackers even without a forecast
     let point = nws::get_point(lat, lon)
         .await
         .map_err(|e| nws_error("get_point", lat, lon, e, errors::APIError::NWSError))?;
