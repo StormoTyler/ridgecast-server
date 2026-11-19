@@ -34,8 +34,16 @@ pub const BRIEF_MAX_MESSAGES: usize = 3;
 pub enum Format {
     // plain words, used for every message unless the request set brief
     Full,
-    // short labels, used only for the reply to a request that set brief
+    // short labels, used for the reply to a request that set brief and for
+    // every message from the tracker it created
     Brief,
+}
+
+impl Format {
+    // the format a request's or a tracker's ForecastVars.brief asks for
+    pub fn from_brief(brief: bool) -> Self {
+        if brief { Format::Brief } else { Format::Full }
+    }
 }
 
 // the order of the lines in a reply. changing it changes every reply,
@@ -154,13 +162,34 @@ pub fn format_reply(
     response: &forecast::SmsForecastResponse,
     now: DateTime<Utc>,
 ) -> Vec<Vec<String>> {
+    let format = Format::from_brief(request.forecast_vars.brief);
+    let parts = body_parts(
+        response,
+        format,
+        &request.forecast_vars.forecast_properties,
+        request.forecast_length,
+        now,
+    );
+    let bodies = match format {
+        Format::Full => pack_within(parts, MAX_MESSAGES),
+        Format::Brief => pack_brief(parts),
+    };
+    add_headers(bodies, None)
+}
+
+// a response's lines in REPLY_ORDER, before they are packed into messages.
+// independent of the request, so a tracker's messages can be built from its own
+// settings: flags are the optional forecast fields and days the number of forecast
+// days. a response without a tracker has no tracker line
+fn body_parts(
+    response: &forecast::SmsForecastResponse,
+    format: Format,
+    flags: &ForecastProperties,
+    days: u32,
+    now: DateTime<Utc>,
+) -> Vec<Part> {
     // NWS reports a time zone for every point it covers, so UTC is only a fallback
     let tz = daily_forecast::point_time_zone(&response.point).unwrap_or(Tz::UTC);
-    let format = if request.forecast_vars.brief {
-        Format::Brief
-    } else {
-        Format::Full
-    };
     let as_parts = |lines: Vec<String>| lines.into_iter().map(Part::Line);
 
     let mut parts = Vec::new();
@@ -182,15 +211,8 @@ pub fn format_reply(
             ))),
             ReplySection::ForecastDays => {
                 if let Some(forecast) = &response.forecast {
-                    let days = forecast_days(
-                        forecast,
-                        &request.forecast_vars.forecast_properties,
-                        tz,
-                        now,
-                        request.forecast_length,
-                        format,
-                    );
-                    parts.extend(days.into_iter().map(Part::Day));
+                    let day_lines = forecast_days(forecast, flags, tz, now, days, format);
+                    parts.extend(day_lines.into_iter().map(Part::Day));
                 }
             }
             // the brief format has no tracker line, only the !no tracker notice
@@ -203,12 +225,7 @@ pub fn format_reply(
             }
         }
     }
-
-    let bodies = match format {
-        Format::Full => pack_within(parts, MAX_MESSAGES),
-        Format::Brief => pack_brief(parts),
-    };
-    add_headers(bodies, None)
+    parts
 }
 
 fn notice_lines(response: &forecast::SmsForecastResponse, format: Format) -> Vec<String> {
