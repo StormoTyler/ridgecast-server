@@ -200,6 +200,93 @@ pub(crate) fn trim_ints(mut series: IntVec, end: DateTime<Utc>) -> IntVec {
     series
 }
 
+// the alerts for a response, and whether they could be loaded
+pub struct LoadedAlerts {
+    // empty when unavailable, so it matches no point
+    pub alerts: AlertsSorted,
+    // set when no alerts could be loaded, so an empty list of active alerts
+    // means they weren't checked, not that there are none
+    pub unavailable: bool,
+    // set when the alerts are older than snapshots::ALERTS_MAX_AGE because
+    // they could not be refreshed from NWS
+    pub stale: bool,
+}
+
+// loads the alerts snapshot for a response. alerts that can't be loaded don't
+// fail the response, the forecast is still sent and the user is told the alerts
+// couldn't be checked. caller names the function in the log
+pub async fn load_alerts(caller: &str, db: &database::DB) -> LoadedAlerts {
+    match snapshots::load_alerts(db).await {
+        Ok(Snapshot { data, stale }) => LoadedAlerts {
+            alerts: data,
+            unavailable: false,
+            stale,
+        },
+        Err(e) => {
+            tracing::warn!("{caller}: alerts unavailable: {e}");
+            LoadedAlerts {
+                alerts: AlertsSorted::default(),
+                unavailable: true,
+                stale: false,
+            }
+        }
+    }
+}
+
+// fetches the point's grid forecast and keeps `days` local days of it, counting
+// today as the first, and the optional fields flags sets. caller names the
+// function in the log
+pub async fn fetch_forecast(
+    caller: &str,
+    point: &Point,
+    flags: &ForecastProperties,
+    days: u32,
+    now: DateTime<Utc>,
+) -> Result<RequestedForecast, errors::APIError> {
+    let forecast = nws::get_gridpoints(point)
+        .await
+        .map_err(|e| gridpoints_error(caller, point, e))?;
+    // forecast days are local days at the location. NWS reports a time zone for
+    // every point it covers, so UTC days are only a fallback
+    let end = match daily_forecast::point_time_zone(point) {
+        Some(tz) => forecast_end(&tz, now, days),
+        None => forecast_end(&Utc, now, days),
+    };
+    Ok(RequestedForecast::from_properties(forecast, flags, end))
+}
+
+// the avalanche zone to show for a point and the notice that explains a missing one.
+// avy_data is None when the avalanche data could not be loaded. with track_avy the
+// zone's forecast is shown at any danger level, and its absence is explained;
+// without it, only at danger level 3 or higher
+pub async fn avalanche_for_point(
+    point: &Point,
+    avy_data: Option<&AvalancheData>,
+    track_avy: bool,
+    now: DateTime<Utc>,
+) -> (Option<AvyProperties>, Option<AvyNotice>) {
+    let Some(avy_data) = avy_data else {
+        // the notice is sent with or without track_avy, since
+        // danger level 3 or higher could not be ruled out
+        return (None, Some(AvyNotice::Unavailable));
+    };
+    if !track_avy {
+        return (get_avy_no_tracker(point, avy_data, now).await, None);
+    }
+    match nac::check_avy_geometry(point, avy_data, now).await {
+        nac::ZoneForecast::Current(zone) => (Some(zone.clone()), None),
+        nac::ZoneForecast::NoZone => (None, None),
+        // the zone is still tracked with no stored forecast,
+        // so its next forecast is reported as new
+        nac::ZoneForecast::NoForecast | nac::ZoneForecast::Expired => {
+            (None, Some(AvyNotice::NoCurrentForecast))
+        }
+        // the zone is still tracked, so the first forecast
+        // after its season starts is reported as new
+        nac::ZoneForecast::OffSeason => (None, Some(AvyNotice::OffSeason)),
+    }
+}
+
 // takes an request::SmsRequest and returns data for the fields flagged as True
 // adds an alerts, avalanche, or daily forecast tracker if those fields are True
 // returns the avalanche zone's data at any danger level when track_avy is True,
@@ -226,23 +313,11 @@ pub async fn get_requested_forecast(
     } = request;
     let (lat, lon) = (*lat, *lon);
 
-    // alerts that can't be loaded don't fail the request, the forecast is still sent.
-    // the user is told the alerts couldn't be checked, so no alert lines
-    // aren't read as no active alerts
-    let mut alerts_notice = false;
-    let mut alerts_stale_notice = false;
-    let alerts = match snapshots::load_alerts(db).await {
-        Ok(Snapshot { data, stale }) => {
-            alerts_stale_notice = stale;
-            data
-        }
-        Err(e) => {
-            tracing::warn!("get_requested_forecast: alerts unavailable: {e}");
-            alerts_notice = true;
-            // matches no point, so active_alerts is empty
-            AlertsSorted::default()
-        }
-    };
+    let LoadedAlerts {
+        alerts,
+        unavailable: alerts_notice,
+        stale: alerts_stale_notice,
+    } = load_alerts("get_requested_forecast", db).await;
 
     // the point is needed for alerts and trackers even without a forecast
     let point = nws::get_point(lat, lon)
@@ -253,23 +328,18 @@ pub async fn get_requested_forecast(
     let forecast = if forecast_vars.no_forecast {
         None
     } else {
-        let forecast = nws::get_gridpoints(&point)
-            .await
-            .map_err(|e| gridpoints_error(lat, lon, e))?;
-        // forecast days are local days at the location. NWS reports a time zone for
-        // every point it covers, so UTC days are only a fallback
-        let end = match daily_forecast::point_time_zone(&point) {
-            Some(tz) => forecast_end(&tz, now, *forecast_length),
-            None => forecast_end(&Utc, now, *forecast_length),
-        };
-        Some(RequestedForecast::from_properties(
-            forecast,
-            &forecast_vars.forecast_properties,
-            end,
-        ))
+        Some(
+            fetch_forecast(
+                "get_requested_forecast",
+                &point,
+                &forecast_vars.forecast_properties,
+                *forecast_length,
+                now,
+            )
+            .await?,
+        )
     };
 
-    let mut avy_notice = None;
     let mut avy_stale_notice = false;
     let track_avy = forecast_vars.track_avy;
     // the user may not have asked about avalanches, so unavailable avalanche
@@ -286,31 +356,7 @@ pub async fn get_requested_forecast(
             None
         }
     };
-    let avy = match &avy_data {
-        // the notice is sent with or without track_avy, since
-        // danger level 3 or higher could not be ruled out
-        None => {
-            avy_notice = Some(AvyNotice::Unavailable);
-            None
-        }
-        Some(avy_data) if track_avy => match nac::check_avy_geometry(&point, avy_data, now).await {
-            nac::ZoneForecast::Current(zone) => Some(zone.clone()),
-            nac::ZoneForecast::NoZone => None,
-            // the zone is still tracked with no stored forecast,
-            // so its next forecast is reported as new
-            nac::ZoneForecast::NoForecast | nac::ZoneForecast::Expired => {
-                avy_notice = Some(AvyNotice::NoCurrentForecast);
-                None
-            }
-            // the zone is still tracked, so the first forecast
-            // after its season starts is reported as new
-            nac::ZoneForecast::OffSeason => {
-                avy_notice = Some(AvyNotice::OffSeason);
-                None
-            }
-        },
-        Some(avy_data) => get_avy_no_tracker(&point, avy_data, now).await,
-    };
+    let (avy, avy_notice) = avalanche_for_point(&point, avy_data.as_ref(), track_avy, now).await;
 
     let time_added = now;
     let expires = time_added + chrono::Duration::hours((*tracker_duration).into());
@@ -423,13 +469,15 @@ fn nws_error(
 
 // maps an NWS gridpoints error. the point was found, so a 404 is not "not
 // covered": it means the gridpoints URL from /points was wrong or NWS has no
-// grid data for it, and the user gets no forecast, so it's logged as an error
-fn gridpoints_error(lat: f32, lon: f32, e: nws::NWSError) -> errors::APIError {
+// grid data for it, and the user gets no forecast, so it's logged as an error.
+// caller names the function in the log
+fn gridpoints_error(caller: &str, point: &Point, e: nws::NWSError) -> errors::APIError {
+    let (lon, lat) = point.geometry.coordinates.x_y();
     if e.is_not_found() {
-        tracing::error!("get_requested_forecast: gridpoints not found for {lat},{lon}: {e}");
+        tracing::error!("{caller}: gridpoints not found for {lat},{lon}: {e}");
         return errors::APIError::ForecastError;
     }
-    tracing::warn!("get_requested_forecast: get_gridpoints failed for {lat},{lon}: {e}");
+    tracing::warn!("{caller}: get_gridpoints failed for {lat},{lon}: {e}");
     if e.is_timeout() {
         errors::APIError::UpstreamTimeout
     } else {
