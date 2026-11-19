@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::geometry;
 use crate::models::{
-    Alert, Alerts, AlertsSorted, Forecast, ForecastResponse, Geocode, GeometryTypes, InvalidAlert,
+    Alert, Alerts, AlertsSorted, Forecast, Geocode, GeometryTypes, InvalidAlert,
     InvalidAlertReason, Point, Properties, RawFeatures, SkippedFeatures,
 };
 
@@ -292,25 +292,6 @@ pub async fn get_point(lat: f32, lon: f32) -> Result<Point, NWSError> {
             result => return result,
         }
     }
-}
-
-// fetches gridpoint data from NWS API gridpoints endpoint
-pub async fn get_forecast(
-    lat: f32,
-    lon: f32,
-    alerts: &AlertsSorted,
-) -> Result<ForecastResponse, NWSError> {
-    let point = get_point(lat, lon).await?;
-    let forecast = get_gridpoints(&point).await?;
-
-    let active_alerts: Vec<Alert> = check_alerts(alerts, &point);
-
-    let forecast_response = ForecastResponse {
-        point,
-        forecast,
-        alerts: active_alerts,
-    };
-    Ok(forecast_response)
 }
 
 // gets a forecast's properties from the nws gridpoints endpoint

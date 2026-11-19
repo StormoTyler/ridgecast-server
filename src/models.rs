@@ -360,13 +360,6 @@ pub struct TimeFloat {
     pub value: Option<f32>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ForecastResponse {
-    pub point: Point,
-    pub forecast: Properties,
-    pub alerts: Vec<Alert>,
-}
-
 // end nws data models
 
 // data structures for NAC data
