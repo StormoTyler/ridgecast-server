@@ -94,7 +94,7 @@ message sent by a tracker has the tracker's name, as given in the request (see
 | Kind | Sent when | Header name | Body |
 |---|---|---|---|
 | Reply | A request is answered | `RidgeCast` | Notices, avalanche, alerts, forecast days, tracker |
-| Daily forecast | A `daily_forecast` tracker reaches 6 AM | Tracker name | Notices, avalanche, alerts, forecast days |
+| Daily forecast | A `daily_forecast` tracker reaches 6 AM | Tracker name | Notices, avalanche, alerts, today's forecast |
 | Alert notification | A tracker finds a new NWS alert | Tracker name | The new alerts |
 | Avalanche notification | A tracker finds a new avalanche forecast, or loses the forecast it last sent | Tracker name | Avalanche |
 | Tracker ended | The tracker's last check before it expires | Tracker name | `Tracking ended`, the last line of that check's message, or alone when the check sends nothing else |
@@ -120,8 +120,8 @@ avalanche forecast, or daily forecast is sent after it.
   when it fits.
 - When the last check has nothing else to send, `Tracking ended` is sent alone
   as `(1/1) <tracker name>`.
-- The line is never dropped to stay within a limit. Forecast days are dropped
-  instead, as for the tracker line in a reply.
+- The line is never dropped to stay within a limit. A daily forecast has no
+  message limit, so nothing is dropped to make room for it either.
 - The reply that created the tracker already gave its expiry time. If the last
   check's message is not delivered after its retries, there is no later check
   to send it again.
@@ -363,17 +363,22 @@ Limits per response:
 | Kind | Messages | Forecast days |
 |---|---|---|
 | Reply | at most 9 | the request's forecast length (1 to 7), dropping the last days to stay within 9 messages |
-| Daily forecast | at most 3, or in the brief format more only when its alerts need more | today and the next 2 days |
+| Daily forecast | no fixed limit: as many as the notices, avalanche, alerts, and today need | today only, never dropped |
 | Alert notifications | at most 9 | none |
 | Avalanche notifications | at most 2 | none |
 | Tracker ended, when sent alone | exactly 1 | none |
 | Error, help | exactly 1 | none |
 
-Forecast days are the only lines dropped to stay within a limit. When the
-notices, avalanche, alerts, and tracker line alone need more than 9 messages,
-the rest continue as another response, so no alert or tracker line is ever
-left out. The same applies to an alert notification with more alerts than fit
-in 9 messages, and to a daily forecast whose alerts don't fit in 3.
+Forecast days in a reply are the only lines dropped to stay within a limit.
+When the notices, avalanche, alerts, and tracker line alone need more than 9
+messages, the rest continue as another response, so no alert or tracker line
+is ever left out. The same applies to an alert notification with more alerts
+than fit in 9 messages, and to a daily forecast with more than 9 messages.
+
+A daily forecast is today's forecast only, sent at 6 AM local time, so it
+covers the rest of the day it is sent. Its day is never dropped: it follows
+the alerts, in the space left in the last message, or in a new message when
+it doesn't fit there.
 
 A forecast day takes about 45 to 120 characters, depending on the weather and
 the optional fields requested. A day with rain or snow and several optional
@@ -435,7 +440,7 @@ only thing that says which one a message is about.
 
 | Kind | Brief body |
 |---|---|
-| Daily forecast | The avalanche line, alerts, then today and the next 2 days. At most 3 messages unless its alerts need more, filled the same way as a brief reply |
+| Daily forecast | The avalanche line, alerts, then today only. No fixed limit: today fills the space left after the alerts or starts a new message, and is never dropped |
 | Alert notification | The new alerts as brief alert lines, such as `!Sev Winter Storm Warning til We7 6PM`. Every new alert is sent, continuing in more messages and responses as in the full format |
 | Avalanche notification | `AV4 High` for a new forecast, `AV no rating`, `AV off season` for an off season loss, `AV no forecast` for any other loss, and `AV no forecast` then `AV may be old` for a loss to out of date data |
 | Tracker ended | `Tracking ended`, the same as the full format, as the last line of the last check's message or alone |
@@ -621,25 +626,17 @@ Tu 34/22 H80-100 P90 R0.85 SN11 SW25G45
 We 30/19 H75-95 P70 R0.30 SN5 W18G35
 ```
 
-A daily forecast from a tracker named `Camp`, then the same daily forecast
-from a tracker created with `brief`:
+A daily forecast sent at 6 AM on Tuesday from a tracker named `Camp`, then
+the same daily forecast from a tracker created with `brief`:
 
 ```
-(1/2) Camp
+(1/1) Camp
 Tue: high 68F, low 47F Precip 10% Wind NW 8mph
-Wed: high 72F, low 49F Precip 0% Wind N 6mph
-```
-
-```
-(2/2) Camp
-Thu: high 64F, low 50F Precip 60%, 0.20in Wind S 12mph
 ```
 
 ```
 (1/1) Camp
 Tu 68/47 P10 NW8
-We 72/49 P0 N6
-Th 64/50 P60 R0.20 S12
 ```
 
 Notifications from a tracker named `Mt Hood`:
