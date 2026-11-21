@@ -1,10 +1,11 @@
-// tests for database::DB against a real MongoDB: its indexes and saving a
-// tracker. ignored by default, see test_db
+// tests for database::DB against a real MongoDB: its indexes, and adding, saving,
+// and deleting trackers. ignored by default, see test_db
 use std::time::Duration;
 
 use mongodb::bson::{Document, doc};
 
 use crate::database;
+use crate::messaging;
 use crate::models::UserPoint;
 use crate::tests::{models_tests, test_db};
 
@@ -118,6 +119,116 @@ async fn a_saved_tracker_is_read_back_with_its_id() {
     assert!(stored.get_datetime("expires_at").is_ok());
     assert_eq!(stored.get_str("user"), Ok(tracker.user.expose()));
 
+    test_db::remove(db).await;
+}
+
+// adds a tracker and reads it back, so it has the _id MongoDB gave it
+async fn stored_tracker(tracker: &UserPoint, db: &database::DB) -> UserPoint {
+    database::add_tracker(tracker, db)
+        .await
+        .expect("the tracker should save");
+    db.points_collection
+        .find_one(doc! { "user": tracker.user.expose() })
+        .await
+        .expect("the tracker should be read")
+        .expect("the tracker should be stored")
+}
+
+async fn tracker_count(db: &database::DB) -> u64 {
+    db.points_collection
+        .count_documents(doc! {})
+        .await
+        .expect("the trackers should count")
+}
+
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn a_checked_tracker_is_saved_over_the_stored_one() {
+    let db = test_db::fresh("update_tracker").await;
+    let mut tracker = stored_tracker(&models_tests::tracker(), &db).await;
+
+    // as a check would change it
+    tracker.avy_lost.raise();
+    let saved = database::update_tracker(&tracker, &db)
+        .await
+        .expect("the save should succeed");
+
+    assert!(saved);
+    assert_eq!(tracker_count(&db).await, 1);
+    let read = db
+        .points_collection
+        .find_one(doc! { "_id": tracker.id })
+        .await
+        .expect("the tracker should be read")
+        .expect("the tracker should be stored");
+    assert!(read.avy_lost.is_raised());
+
+    test_db::remove(db).await;
+}
+
+// a tracker deleted while it was checked, by its TTL index or after the user
+// replied STOP, stays deleted: the save is never an upsert
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn a_deleted_tracker_is_not_brought_back_by_a_save() {
+    let db = test_db::fresh("save_deleted_tracker").await;
+    let tracker = stored_tracker(&models_tests::tracker(), &db).await;
+    db.points_collection
+        .delete_many(doc! {})
+        .await
+        .expect("the tracker should delete");
+
+    let saved = database::update_tracker(&tracker, &db)
+        .await
+        .expect("the save should succeed");
+
+    assert!(!saved);
+    assert_eq!(tracker_count(&db).await, 0);
+    test_db::remove(db).await;
+}
+
+// a tracker that was never inserted has no _id, so nothing is saved
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn a_tracker_without_an_id_is_not_saved() {
+    let db = test_db::fresh("update_tracker_without_id").await;
+
+    let saved = database::update_tracker(&models_tests::tracker(), &db)
+        .await
+        .expect("the save should succeed");
+
+    assert!(!saved);
+    assert_eq!(tracker_count(&db).await, 0);
+    test_db::remove(db).await;
+}
+
+// STOP deletes every tracker of the user who sent it, and no one else's
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn stop_deletes_every_tracker_of_the_user_and_no_others() {
+    let db = test_db::fresh("delete_user_trackers").await;
+    let tracker = models_tests::tracker();
+    let mut other = models_tests::tracker();
+    other.user = messaging::PhoneNumber::new("+15415550199").unwrap();
+    for user_point in [&tracker, &tracker, &other] {
+        database::add_tracker(user_point, &db)
+            .await
+            .expect("the tracker should save");
+    }
+
+    let deleted = database::delete_user_trackers(&tracker.user, &db)
+        .await
+        .expect("the trackers should delete");
+
+    assert_eq!(deleted, 2);
+    let left: UserPoint = db
+        .points_collection
+        .find_one(doc! {})
+        .await
+        .expect("the trackers should be read")
+        .expect("the other user's tracker should be left");
+    assert_eq!(tracker_count(&db).await, 1);
+    assert_eq!(left.user, other.user);
     test_db::remove(db).await;
 }
 

@@ -9,6 +9,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 // local modules
+use crate::messaging;
 use crate::models::{
     AlertsSorted, AvalancheData, InvalidAlert, InvalidAvyArea, SkippedFeature, UserNumber,
     UserPoint,
@@ -197,4 +198,43 @@ fn is_on_this_machine(address: &ServerAddress) -> bool {
 pub async fn add_tracker(user_point: &UserPoint, db: &DB) -> Result<()> {
     db.points_collection.insert_one(user_point).await?;
     Ok(())
+}
+
+// saves a checked tracker back over the stored one, matched by its _id. returns
+// false when nothing was saved because the tracker is no longer stored. never an
+// upsert: a tracker deleted while it was being checked, by its TTL index or by
+// delete_user_trackers after the user replied STOP, must stay deleted, or a
+// stopped tracker would come back and text a user who opted out
+// unused until the scheduler saves checked trackers, remove the allow then
+#[allow(dead_code)]
+pub async fn update_tracker(user_point: &UserPoint, db: &DB) -> Result<bool> {
+    // a tracker without an _id was never inserted, so there is nothing to save over
+    let Some(id) = user_point.id else {
+        tracing::warn!("update_tracker: tracker has no _id, so it was never stored");
+        return Ok(false);
+    };
+    let result = db
+        .points_collection
+        .replace_one(doc! { "_id": id }, user_point)
+        .await?;
+    if result.matched_count == 0 {
+        tracing::debug!("update_tracker: tracker {id} is no longer stored, not saved");
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+// deletes every tracker of a user, for a user who replied STOP. trackers are
+// deleted rather than paused, and nothing brings them back if the user opts in
+// again. returns how many were deleted
+// unused until the tracker checks handle SendError::OptedOut, remove the allow then
+#[allow(dead_code)]
+pub async fn delete_user_trackers(user: &messaging::PhoneNumber, db: &DB) -> Result<u64> {
+    // the number is serialized the way UserPoint.user is stored, a plain E.164
+    // string, without exposing it in this module
+    let result = db
+        .points_collection
+        .delete_many(doc! { "user": bson::to_bson(user)? })
+        .await?;
+    Ok(result.deleted_count)
 }
