@@ -259,7 +259,7 @@ pub async fn fetch_forecast(
 // avy_data is None when the avalanche data could not be loaded. with track_avy the
 // zone's forecast is shown at any danger level, and its absence is explained;
 // without it, only at danger level 3 or higher
-pub async fn avalanche_for_point(
+pub fn avalanche_for_point(
     point: &Point,
     avy_data: Option<&AvalancheData>,
     track_avy: bool,
@@ -271,9 +271,9 @@ pub async fn avalanche_for_point(
         return (None, Some(AvyNotice::Unavailable));
     };
     if !track_avy {
-        return (get_avy_no_tracker(point, avy_data, now).await, None);
+        return (get_avy_no_tracker(point, avy_data, now), None);
     }
-    match nac::check_avy_geometry(point, avy_data, now).await {
+    match nac::check_avy_geometry(point, avy_data, now) {
         nac::ZoneForecast::Current(zone) => (Some(zone.clone()), None),
         nac::ZoneForecast::NoZone => (None, None),
         // the zone is still tracked with no stored forecast,
@@ -356,7 +356,7 @@ pub async fn get_requested_forecast(
             None
         }
     };
-    let (avy, avy_notice) = avalanche_for_point(&point, avy_data.as_ref(), track_avy, now).await;
+    let (avy, avy_notice) = avalanche_for_point(&point, avy_data.as_ref(), track_avy, now);
 
     let time_added = now;
     let expires = time_added + chrono::Duration::hours((*tracker_duration).into());
@@ -487,12 +487,12 @@ fn gridpoints_error(caller: &str, point: &Point, e: nws::NWSError) -> errors::AP
 
 // checks if the point is in any avalanche forecast zone
 // returns the avy_properties for the area if danger_level >= 3
-async fn get_avy_no_tracker(
+fn get_avy_no_tracker(
     point: &Point,
     avy_data: &AvalancheData,
     now: DateTime<Utc>,
 ) -> Option<AvyProperties> {
-    match nac::check_avy_geometry(point, avy_data, now).await {
+    match nac::check_avy_geometry(point, avy_data, now) {
         // NAC rates danger 1 (low) to 5 (extreme), 3 is considerable
         nac::ZoneForecast::Current(zone) => Some(zone)
             .filter(|properties| properties.danger_level.is_some_and(|level| level >= 3))

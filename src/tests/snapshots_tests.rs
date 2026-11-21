@@ -324,8 +324,8 @@ async fn stored_avy_zones_match_points_as_before() {
         nac_tests::make_point(48.310457276, -113.979234344),
     ];
     for point in &points {
-        let before = nac::check_avy_geometry(point, &avy, now).await;
-        let after = nac::check_avy_geometry(point, &loaded, now).await;
+        let before = nac::check_avy_geometry(point, &avy, now);
+        let after = nac::check_avy_geometry(point, &loaded, now);
         assert!(matches!(before, nac::ZoneForecast::Current(_)));
         assert_eq!(after, before);
     }
