@@ -126,6 +126,14 @@ avalanche forecast, or daily forecast is sent after it.
   check's message is not delivered after its retries, there is no later check
   to send it again.
 
+### STOP
+
+Replying `STOP` ends every tracker for that number. The server deletes the
+trackers rather than pausing them, and sends no `Tracking ended` message,
+since nothing more can be sent to a number that opted out. Opting in again
+(`START`) does not bring them back: the user sends a new request to track a
+location again.
+
 ## Full format
 
 ### Body lines
