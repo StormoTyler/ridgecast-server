@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 // local modules
 use crate::messaging;
-use crate::tracking;
+use crate::tracking::shared;
 
 // user data models
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -31,11 +31,11 @@ pub struct UserPoint {
     // set once the user is told avy is no longer valid, so the loss is
     // notified once. trackers stored before this field read it as not raised
     #[serde(default)]
-    pub avy_lost: tracking::NoticeFlag,
+    pub avy_lost: shared::NoticeFlag,
     // set once the user is told the center entered its off season. kept apart from
     // avy_lost, so the off season notice is still sent after any other kind of loss
     #[serde(default)]
-    pub avy_off_season: tracking::NoticeFlag,
+    pub avy_off_season: shared::NoticeFlag,
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub time_added: DateTime<Utc>,
     pub valid_duration: u32,

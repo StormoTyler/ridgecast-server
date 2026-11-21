@@ -16,7 +16,7 @@ use crate::models::{
     AvalancheData, AvyArea, AvyProperties, DateTimeTypes, GeometryTypes, InvalidAvyArea, Point,
     RawFeatures, SkippedFeatures, Snapshot, UserPoint,
 };
-use crate::tracking;
+use crate::tracking::shared;
 
 const BASE_URL: &str = "https://api.avalanche.org/v2/public/products/map-layer";
 
@@ -196,11 +196,11 @@ pub async fn check_avy_geometry<'a>(
         .as_ref()
         .map(DateTimeTypes::to_utc);
     let end = area.properties.end_date.as_ref().map(DateTimeTypes::to_utc);
-    match tracking::validity(start, end, now) {
+    match shared::validity(start, end, now) {
         // a level on the North American Public Avalanche Danger Scale, 1 (low)
         // to 5 (extreme), or NAC's -1, a valid forecast with no rating.
         // any other level is invalid
-        tracking::Validity::Current | tracking::Validity::NotStarted
+        shared::Validity::Current | shared::Validity::NotStarted
             if area
                 .properties
                 .danger_level
@@ -208,9 +208,9 @@ pub async fn check_avy_geometry<'a>(
         {
             ZoneForecast::Current(&area.properties)
         }
-        tracking::Validity::Current | tracking::Validity::NotStarted => ZoneForecast::NoForecast,
-        tracking::Validity::Expired => ZoneForecast::Expired,
-        tracking::Validity::NoStart | tracking::Validity::NoEnd => ZoneForecast::NoForecast,
+        shared::Validity::Current | shared::Validity::NotStarted => ZoneForecast::NoForecast,
+        shared::Validity::Expired => ZoneForecast::Expired,
+        shared::Validity::NoStart | shared::Validity::NoEnd => ZoneForecast::NoForecast,
     }
 }
 
