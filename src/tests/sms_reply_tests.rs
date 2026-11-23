@@ -1578,3 +1578,116 @@ fn avy_notification_sends_nothing_without_news() {
         );
     }
 }
+
+// the alert notification for an update, in both formats, from a tracker named Mt Hood
+fn alert_notification(update: &tracker_checks::AlertTrackerUpdate) -> [Vec<Vec<String>>; 2] {
+    [reply::Format::Full, reply::Format::Brief]
+        .map(|format| reply::format_alert_notification(update, &point(), format, "Mt Hood"))
+}
+
+// the examples in docs/sms-reply-format.md, given least severe first, so the
+// notification sorts them
+fn red_flag_and_wind() -> Vec<Alert> {
+    vec![
+        alert(
+            "Wind Advisory",
+            Some("Moderate"),
+            Some("2026-10-07T11:00:00-07:00"),
+        ),
+        alert(
+            "Red Flag Warning",
+            Some("Severe"),
+            Some("2026-10-08T20:00:00-07:00"),
+        ),
+    ]
+}
+
+#[test]
+fn alert_notification_sends_new_alerts_most_severe_first() {
+    let update = tracker_checks::AlertTrackerUpdate::NewAlerts {
+        alerts: red_flag_and_wind(),
+        stale: false,
+    };
+
+    assert_eq!(
+        alert_notification(&update),
+        [
+            one_message(
+                "(1/1) Mt Hood\n!Severe: Red Flag Warning until Thu 10/8 8PM\n\
+                 !Moderate: Wind Advisory until Wed 10/7 11AM"
+            ),
+            one_message(
+                "(1/1) Mt Hood\n!Sev Red Flag Warning til Th8 8PM\n!Mod Wind Advisory til We7 11AM"
+            ),
+        ]
+    );
+}
+
+// alerts from out of date data are still sent, with the stale notice first
+#[test]
+fn alert_notification_from_stale_data_starts_with_the_stale_notice() {
+    let update = tracker_checks::AlertTrackerUpdate::NewAlerts {
+        alerts: red_flag_and_wind(),
+        stale: true,
+    };
+
+    let [full, brief] = alert_notification(&update);
+
+    assert!(full[0][0].starts_with("(1/1) Mt Hood\n!Alerts may be out of date\n!Severe:"));
+    assert!(brief[0][0].starts_with("(1/1) Mt Hood\n!alerts may be old\n!Sev "));
+}
+
+#[test]
+fn alert_notification_when_alerts_could_not_be_checked() {
+    assert_eq!(
+        alert_notification(&tracker_checks::AlertTrackerUpdate::Uncheckable),
+        [
+            one_message("(1/1) Mt Hood\n!Alerts could not be checked"),
+            one_message("(1/1) Mt Hood\n!alerts not checked"),
+        ]
+    );
+}
+
+#[test]
+fn alert_notification_sends_nothing_without_news() {
+    for update in [
+        tracker_checks::AlertTrackerUpdate::Unchanged,
+        tracker_checks::AlertTrackerUpdate::CheckableAgain,
+    ] {
+        assert_eq!(
+            alert_notification(&update),
+            [Vec::<Vec<String>>::new(), Vec::new()],
+            "{update:?}"
+        );
+    }
+}
+
+// every new alert is sent: past 9 messages they continue as another response,
+// numbered from (1/n) again
+#[test]
+fn alert_notification_continues_many_alerts_in_another_response() {
+    let update = tracker_checks::AlertTrackerUpdate::NewAlerts {
+        alerts: brief_alerts(30),
+        stale: false,
+    };
+
+    let responses =
+        reply::format_alert_notification(&update, &point(), reply::Format::Brief, "Mt Hood");
+
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0].len(), reply::MAX_MESSAGES);
+    assert!(responses[0][0].starts_with("(1/9) Mt Hood\n"));
+    assert!(responses[1][0].starts_with("(1/1) Mt Hood\n"));
+    let alert_lines = responses
+        .iter()
+        .flatten()
+        .flat_map(|message| message.lines().skip(1))
+        .count();
+    assert_eq!(alert_lines, 30);
+    for message in responses.iter().flatten() {
+        assert!(
+            message.chars().count() <= reply::MESSAGE_LENGTH,
+            "{message}"
+        );
+    }
+}

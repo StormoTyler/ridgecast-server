@@ -8,7 +8,7 @@ use chrono_tz::Tz;
 // local modules
 use crate::daily_forecast;
 use crate::errors;
-use crate::models::{Alert, AvyProperties, ForecastProperties};
+use crate::models::{Alert, AvyProperties, ForecastProperties, Point};
 use crate::sms::{daily_values, forecast, request};
 use crate::tracking::tracker_checks;
 
@@ -302,6 +302,39 @@ pub fn format_avy_notification(
         // the user already has the restored forecast
         tracker_checks::AvyTrackerUpdate::Unchanged
         | tracker_checks::AvyTrackerUpdate::ForecastRestored => Vec::new(),
+    };
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let parts: Vec<Part> = lines.into_iter().map(Part::Line).collect();
+    add_headers(pack_messages(&parts), Some(tracker_name))
+}
+
+// the alert notification for what a tracker's alert check found, as responses
+// headed with the tracker's name, of at most MAX_MESSAGES messages each, continuing
+// in more responses so no alert is left out. empty when the update sends nothing.
+// alert times are in the point's time zone. format is the tracker's own
+// unused until the scheduler sends tracker messages, remove the allow then
+#[allow(dead_code)]
+pub fn format_alert_notification(
+    update: &tracker_checks::AlertTrackerUpdate,
+    point: &Point,
+    format: Format,
+    tracker_name: &str,
+) -> Vec<Vec<String>> {
+    // NWS reports a time zone for every point it covers, so UTC is only a fallback
+    let tz = daily_forecast::point_time_zone(point).unwrap_or(Tz::UTC);
+    let lines = match update {
+        // the stale notice comes first, so it stays in the first message
+        tracker_checks::AlertTrackerUpdate::NewAlerts { alerts, stale } => {
+            alert_lines(alerts, false, *stale, tz, format)
+        }
+        // the could not be checked notice, sent alone
+        tracker_checks::AlertTrackerUpdate::Uncheckable => {
+            alert_lines(&[], true, false, tz, format)
+        }
+        tracker_checks::AlertTrackerUpdate::Unchanged
+        | tracker_checks::AlertTrackerUpdate::CheckableAgain => Vec::new(),
     };
     if lines.is_empty() {
         return Vec::new();

@@ -95,7 +95,7 @@ message sent by a tracker has the tracker's name, as given in the request (see
 |---|---|---|---|
 | Reply | A request is answered | `RidgeCast` | Notices, avalanche, alerts, forecast days, tracker |
 | Daily forecast | A `daily_forecast` tracker reaches 6 AM | Tracker name | Notices, avalanche, alerts, today's forecast |
-| Alert notification | A tracker finds a new NWS alert | Tracker name | The new alerts |
+| Alert notification | A tracker finds a new NWS alert, or can't check alerts | Tracker name | The new alerts, or `!Alerts could not be checked` |
 | Avalanche notification | A tracker finds a new avalanche forecast, or loses the forecast it last sent | Tracker name | Avalanche |
 | Tracker ended | The tracker's last check before it expires | Tracker name | `Tracking ended`, the last line of that check's message, or alone when the check sends nothing else |
 | Error | A request could not be answered | `RidgeCast` | Error line |
@@ -283,6 +283,27 @@ old and could not be refreshed from NWS, matching `alerts_stale_notice` in
 out-of-date alerts can miss a new alert. Coming before the alert lines keeps
 it in the first message, however many alerts follow.
 
+An alert tracker sends a notification with the alerts at its location that it
+hasn't sent before, sorted and continued across messages as in a reply:
+
+- Each alert is sent once, recognized by its NWS id. An alert that NWS updates
+  gets a new id, so the update is sent too. An alert without an id can't be
+  recognized, so it is sent on every check while it is active, rather than
+  risking a missed one. The alerts in the reply that created the tracker are
+  not sent again.
+- Alerts are never merged by what they say: two alerts that would show the
+  same line, such as Flood Warnings for two rivers in one county, are both
+  sent.
+- Alerts from out-of-date data that the tracker hasn't sent are still sent,
+  with `!Alerts may be out of date` first, since out-of-date data can still be
+  newer than what the tracker last checked.
+- When the alerts can't be checked, because they could not be read or are out
+  of date with nothing new, `!Alerts could not be checked` is sent alone, once.
+  It is not sent again until fresh alerts have been checked, so a later outage
+  is notified again. Nothing is sent when fresh alerts can be checked again.
+  If the reply that created the tracker already said the alerts could not be
+  checked, the tracker doesn't repeat it.
+
 ### Forecast day
 
 ```
@@ -452,7 +473,7 @@ only thing that says which one a message is about.
 | Kind | Brief body |
 |---|---|
 | Daily forecast | The avalanche line, alerts, then today only. No fixed limit: today fills the space left after the alerts or starts a new message, and is never dropped |
-| Alert notification | The new alerts as brief alert lines, such as `!Sev Winter Storm Warning til We7 6PM`. Every new alert is sent, continuing in more messages and responses as in the full format |
+| Alert notification | The new alerts as brief alert lines, such as `!Sev Winter Storm Warning til We7 6PM`, after `!alerts may be old` when the data is out of date. Every new alert is sent, continuing in more messages and responses as in the full format. `!alerts not checked` alone when the alerts can't be checked |
 | Avalanche notification | `AV4 High` for a new forecast, `AV no rating`, `AV off season` for an off season loss, `AV no forecast` for any other loss, `AV no forecast` then `AV may be old` for a loss to out of date data, and `AV unavailable` for a loss to data that could not be read |
 | Tracker ended | `Tracking ended`, the same as the full format, as the last line of the last check's message or alone |
 
