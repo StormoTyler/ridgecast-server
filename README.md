@@ -6,13 +6,13 @@ RidgeCast sends weather forecasts, National Weather Service alerts, and
 avalanche forecasts via text message. Requests to the server are made over SMS
 or satellite messenger.
 
-This repository is the server: it answers requests, and (in progress) runs
-trackers that follow a location for up to a week and send new alerts, new
-avalanche forecasts, and daily forecasts.
+This repository is the server: it answers requests, and runs trackers that
+follow a location for up to a week and send new alerts, new avalanche
+forecasts, and daily forecasts.
 
-> **Status: in development.** Answering requests works end to end with the
-> `local` SMS provider, which prints replies instead of texting them. SMS
-> provider adapters and tracker messages aren't implemented yet.
+> **Status: in development.** Answering requests and the hourly tracker checks
+> work end to end with the `local` SMS provider, which prints messages instead
+> of texting them. SMS provider adapters aren't implemented yet.
 
 ## How it works
 

@@ -1,9 +1,11 @@
 # RidgeCast SMS reply format
 
-**Status: draft.** `src/sms/reply.rs` implements replies to requests, errors,
-and the help message. Daily forecasts and tracker notifications aren't
-implemented yet. Replies are sent only through the `local` SMS provider's
-development route, `POST /dev/sms`, until a real provider is added.
+**Status: draft.** `src/sms/reply.rs` implements every message here: replies
+to requests, errors, the help and opt-in messages, daily forecasts, tracker
+notifications, and `Tracking ended`, which the hourly tracker check sends.
+Messages are sent only through the `local` SMS provider, which prints them
+(replies through its development route, `POST /dev/sms`), until a real provider
+is added.
 
 This document defines the text messages that the RidgeCast server sends to
 users: replies to requests (see [sms-format.md](sms-format.md)), scheduled
