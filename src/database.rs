@@ -205,8 +205,6 @@ pub async fn add_tracker(user_point: &UserPoint, db: &DB) -> Result<()> {
 // upsert: a tracker deleted while it was being checked, by its TTL index or by
 // delete_user_trackers after the user replied STOP, must stay deleted, or a
 // stopped tracker would come back and text a user who opted out
-// unused until the scheduler saves checked trackers, remove the allow then
-#[allow(dead_code)]
 pub async fn update_tracker(user_point: &UserPoint, db: &DB) -> Result<bool> {
     // a tracker without an _id was never inserted, so there is nothing to save over
     let Some(id) = user_point.id else {
@@ -227,8 +225,6 @@ pub async fn update_tracker(user_point: &UserPoint, db: &DB) -> Result<bool> {
 // deletes every tracker of a user, for a user who replied STOP. trackers are
 // deleted rather than paused, and nothing brings them back if the user opts in
 // again. returns how many were deleted
-// unused until the tracker checks handle SendError::OptedOut, remove the allow then
-#[allow(dead_code)]
 pub async fn delete_user_trackers(user: &messaging::PhoneNumber, db: &DB) -> Result<u64> {
     // the number is serialized the way UserPoint.user is stored, a plain E.164
     // string, without exposing it in this module

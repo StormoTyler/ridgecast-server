@@ -92,8 +92,6 @@ fn record_avy_loss(user_point: &mut UserPoint, loss: AvyTrackerUpdate) -> AvyTra
 }
 
 // what check_alert_tracker found, for the scheduler to act on
-// unused until the scheduler sends the alerts, remove the allow then
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum AlertTrackerUpdate {
     // nothing to send. the tracker may have dropped ids of alerts that ended,
@@ -212,8 +210,6 @@ pub fn is_last_check(user_point: &UserPoint, hour: DateTime<Utc>) -> bool {
 pub const DAILY_FORECAST_CUTOFF_HOUR: u32 = 16;
 
 // whether a check sends the tracker's daily forecast
-// unused until the scheduler calls it, remove the allow then
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DailyForecastCheck {
     NotDue,
@@ -285,8 +281,6 @@ pub fn daily_forecast_check(user_point: &UserPoint, hour: DateTime<Utc>) -> Dail
 // it was sent or its last attempt failed. None once no 6 AM is left before the
 // tracker expires, or when the point has no usable time zone, which a daily
 // forecast tracker always has
-// unused until the scheduler calls it, remove the allow then
-#[allow(dead_code)]
 pub fn advance_daily_forecast(user_point: &mut UserPoint, hour: DateTime<Utc>) {
     user_point.next_daily_forecast = match daily_forecast::point_time_zone(&user_point.point) {
         Some(tz) => daily_forecast::next_daily_forecast(tz, hour, user_point.expires_at),
@@ -305,8 +299,6 @@ pub fn advance_daily_forecast(user_point: &mut UserPoint, hour: DateTime<Utc>) {
 // what one hourly check of a tracker found. the scheduler decides what to send:
 // a daily forecast that is fetched replaces the hour's notifications, and when it
 // can't be fetched the notifications are sent as usual
-// unused until the scheduler calls check_tracker, remove the allow then
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TrackerCheck {
     // None when the tracker doesn't track avalanche forecasts
@@ -326,8 +318,6 @@ pub struct TrackerCheck {
 // due, so its stored state stays right whichever message is sent. hour is also the
 // avalanche check's now, so the whole check uses one time. the tracker is changed in
 // place, so the scheduler checks a copy and saves it only once its messages are sent
-// unused until the scheduler calls it, remove the allow then
-#[allow(dead_code)]
 pub fn check_tracker(
     user_point: &mut UserPoint,
     alerts: Option<&Snapshot<AlertsSorted>>,

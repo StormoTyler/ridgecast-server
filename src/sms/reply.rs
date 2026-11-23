@@ -258,8 +258,6 @@ fn notice_lines(response: &forecast::SmsForecastResponse, format: Format) -> Vec
 // avy is the tracker's stored forecast after the check, which a new forecast
 // replaced. format is the tracker's own, from the request that created it.
 // closing is the check's closing_lines, given to the last message the check sends
-// unused until the scheduler sends tracker messages, remove the allow then
-#[allow(dead_code)]
 pub fn format_avy_notification(
     update: tracker_checks::AvyTrackerUpdate,
     avy: Option<&AvyProperties>,
@@ -313,8 +311,6 @@ pub fn format_avy_notification(
 // in more responses so no alert is left out. empty when the update sends nothing.
 // alert times are in the point's time zone. format is the tracker's own, and
 // closing is the check's closing_lines, given to the last message the check sends
-// unused until the scheduler sends tracker messages, remove the allow then
-#[allow(dead_code)]
 pub fn format_alert_notification(
     update: &tracker_checks::AlertTrackerUpdate,
     point: &Point,
@@ -347,8 +343,6 @@ pub fn format_alert_notification(
 // line. flags and format are the tracker's own, and now is the check's hour, which
 // decides what today is. closing is the check's closing_lines, after today, since
 // the daily forecast is the only message of the check that sends it
-// unused until the scheduler sends tracker messages, remove the allow then
-#[allow(dead_code)]
 pub fn format_daily_forecast(
     response: &forecast::SmsForecastResponse,
     flags: &ForecastProperties,
@@ -365,8 +359,6 @@ pub fn format_daily_forecast(
 // the notice sent once when a daily forecast could not be fetched by its last
 // attempt, at the end of that check's notifications or alone. the same full
 // wording as a reply's notice that no daily forecast tracker was created
-// unused until the scheduler sends tracker messages, remove the allow then
-#[allow(dead_code)]
 pub fn daily_forecast_unavailable(format: Format) -> String {
     match format {
         Format::Full => DAILY_FORECAST_UNAVAILABLE,
@@ -385,8 +377,6 @@ const TRACKING_ENDED: &str = "Tracking ended";
 // tracker's last check. they go at the end of the last message the check sends,
 // starting a new message only when they don't fit, and are never dropped. when the
 // check sends nothing else, format_closing sends them alone
-// unused until the scheduler sends tracker messages, remove the allow then
-#[allow(dead_code)]
 pub fn closing_lines(daily_unavailable: bool, ended: bool, format: Format) -> Vec<String> {
     let mut lines = Vec::new();
     if daily_unavailable {
@@ -400,8 +390,6 @@ pub fn closing_lines(daily_unavailable: bool, ended: bool, format: Format) -> Ve
 
 // a check's closing lines on their own, as (1/1) <tracker name>, for a check that
 // sends nothing else. empty when there are none
-// unused until the scheduler sends tracker messages, remove the allow then
-#[allow(dead_code)]
 pub fn format_closing(closing: &[String], tracker_name: &str) -> Vec<Vec<String>> {
     notification(closing.to_vec(), tracker_name, &[])
 }

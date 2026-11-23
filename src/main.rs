@@ -88,6 +88,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // alerts at :10, :25, :40 and :55, avalanche data at :55
     tokio::spawn(scheduler::refresh_alerts(db.clone()));
     tokio::spawn(scheduler::refresh_avy(db.clone()));
+    // every tracker is checked on the hour, 5 minutes after the refreshes, and sends
+    // its messages through the same provider as replies
+    tokio::spawn(scheduler::check_trackers(
+        db.clone(),
+        provider.sender.clone(),
+    ));
 
     // printed only once the port is bound
     tracing::info!("Listening on: {addr}");
