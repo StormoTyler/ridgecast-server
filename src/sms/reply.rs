@@ -1,6 +1,6 @@
-// formats replies to SMS requests as the text messages defined in
-// docs/sms-reply-format.md. the alert, avalanche, forecast day, and packing
-// helpers are public so the scheduler's tracker messages can reuse them
+// formats replies to SMS requests, and the messages trackers send, as the text
+// messages defined in docs/sms-reply-format.md. the alert, avalanche, forecast day,
+// and packing helpers are public so the scheduler's tracker messages can reuse them
 
 use chrono::{DateTime, Datelike, Timelike, Utc, Weekday};
 use chrono_tz::Tz;
@@ -10,6 +10,7 @@ use crate::daily_forecast;
 use crate::errors;
 use crate::models::{Alert, AvyProperties, ForecastProperties};
 use crate::sms::{daily_values, forecast, request};
+use crate::tracking::tracker_checks;
 
 // ---- message limits, line order, and alert severity ----
 
@@ -248,6 +249,65 @@ fn notice_lines(response: &forecast::SmsForecastResponse, format: Format) -> Vec
         }
     }
     lines
+}
+
+// ---- tracker notifications ----
+
+// the avalanche notification for what a tracker's avalanche check found, as
+// responses headed with the tracker's name. empty when the update sends nothing.
+// avy is the tracker's stored forecast after the check, which a new forecast
+// replaced. format is the tracker's own, from the request that created it
+// unused until the scheduler sends tracker messages, remove the allow then
+#[allow(dead_code)]
+pub fn format_avy_notification(
+    update: tracker_checks::AvyTrackerUpdate,
+    avy: Option<&AvyProperties>,
+    format: Format,
+    tracker_name: &str,
+) -> Vec<Vec<String>> {
+    let lines = match update {
+        tracker_checks::AvyTrackerUpdate::NewForecast => match avy {
+            Some(avy) => avalanche_lines(Some(avy), None, false, format),
+            // check_avy_tracker always stores the new forecast, so this can't happen.
+            // the loss notice is sent rather than nothing, since better safe than sorry
+            None => {
+                tracing::error!("format_avy_notification: a new forecast with none stored");
+                avalanche_lines(
+                    None,
+                    Some(forecast::AvyNotice::NoCurrentForecast),
+                    false,
+                    format,
+                )
+            }
+        },
+        tracker_checks::AvyTrackerUpdate::ForecastLost => avalanche_lines(
+            None,
+            Some(forecast::AvyNotice::NoCurrentForecast),
+            false,
+            format,
+        ),
+        tracker_checks::AvyTrackerUpdate::OffSeason => {
+            avalanche_lines(None, Some(forecast::AvyNotice::OffSeason), false, format)
+        }
+        // the forecast can't be confirmed from out of date data
+        tracker_checks::AvyTrackerUpdate::DataStale => avalanche_lines(
+            None,
+            Some(forecast::AvyNotice::NoCurrentForecast),
+            true,
+            format,
+        ),
+        tracker_checks::AvyTrackerUpdate::DataUnavailable => {
+            avalanche_lines(None, Some(forecast::AvyNotice::Unavailable), false, format)
+        }
+        // the user already has the restored forecast
+        tracker_checks::AvyTrackerUpdate::Unchanged
+        | tracker_checks::AvyTrackerUpdate::ForecastRestored => Vec::new(),
+    };
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let parts: Vec<Part> = lines.into_iter().map(Part::Line).collect();
+    add_headers(pack_messages(&parts), Some(tracker_name))
 }
 
 // ---- avalanche, alert, and tracker lines ----

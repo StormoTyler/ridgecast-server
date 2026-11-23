@@ -9,6 +9,7 @@ use crate::models::{
 };
 use crate::sms::{forecast, reply, request};
 use crate::tests;
+use crate::tracking::tracker_checks;
 
 const TZ: Tz = chrono_tz::America::Los_Angeles;
 
@@ -1504,4 +1505,76 @@ fn api_errors_are_one_line() {
         reply::format_api_error(&errors::APIError::DatabaseError),
         "(1/1) RidgeCast\nServer error, try later"
     );
+}
+
+// ---- tracker notifications ----
+
+// the avalanche notification for an update, in both formats, from a tracker named
+// Mt Hood whose stored forecast is danger 4
+fn avy_notification(update: tracker_checks::AvyTrackerUpdate) -> [Vec<Vec<String>>; 2] {
+    let stored = avy(4);
+    [reply::Format::Full, reply::Format::Brief]
+        .map(|format| reply::format_avy_notification(update, Some(&stored), format, "Mt Hood"))
+}
+
+fn one_message(text: &str) -> Vec<Vec<String>> {
+    vec![vec![text.to_string()]]
+}
+
+#[test]
+fn avy_notification_for_a_new_forecast() {
+    assert_eq!(
+        avy_notification(tracker_checks::AvyTrackerUpdate::NewForecast),
+        [
+            one_message("(1/1) Mt Hood\nAvy danger 4 High, Mt Hood"),
+            one_message("(1/1) Mt Hood\nAV4 High"),
+        ]
+    );
+}
+
+#[test]
+fn avy_notification_for_each_loss() {
+    for (update, full, brief) in [
+        (
+            tracker_checks::AvyTrackerUpdate::ForecastLost,
+            "(1/1) Mt Hood\nAvy: no current forecast",
+            "(1/1) Mt Hood\nAV no forecast",
+        ),
+        (
+            tracker_checks::AvyTrackerUpdate::OffSeason,
+            "(1/1) Mt Hood\nAvy: center is in its off season",
+            "(1/1) Mt Hood\nAV off season",
+        ),
+        (
+            tracker_checks::AvyTrackerUpdate::DataStale,
+            "(1/1) Mt Hood\nAvy: no current forecast\nAvy: data may be out of date",
+            "(1/1) Mt Hood\nAV no forecast\nAV may be old",
+        ),
+        (
+            tracker_checks::AvyTrackerUpdate::DataUnavailable,
+            "(1/1) Mt Hood\nAvy: data unavailable, try later",
+            "(1/1) Mt Hood\nAV unavailable",
+        ),
+    ] {
+        assert_eq!(
+            avy_notification(update),
+            [one_message(full), one_message(brief)],
+            "{update:?}"
+        );
+    }
+}
+
+// a restored forecast is one the user already has, so nothing is sent
+#[test]
+fn avy_notification_sends_nothing_without_news() {
+    for update in [
+        tracker_checks::AvyTrackerUpdate::Unchanged,
+        tracker_checks::AvyTrackerUpdate::ForecastRestored,
+    ] {
+        assert_eq!(
+            avy_notification(update),
+            [Vec::<Vec<String>>::new(), Vec::new()],
+            "{update:?}"
+        );
+    }
 }
