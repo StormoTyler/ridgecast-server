@@ -1514,7 +1514,7 @@ fn api_errors_are_one_line() {
 fn avy_notification(update: tracker_checks::AvyTrackerUpdate) -> [Vec<Vec<String>>; 2] {
     let stored = avy(4);
     [reply::Format::Full, reply::Format::Brief]
-        .map(|format| reply::format_avy_notification(update, Some(&stored), format, "Mt Hood"))
+        .map(|format| reply::format_avy_notification(update, Some(&stored), format, "Mt Hood", &[]))
 }
 
 fn one_message(text: &str) -> Vec<Vec<String>> {
@@ -1582,7 +1582,7 @@ fn avy_notification_sends_nothing_without_news() {
 // the alert notification for an update, in both formats, from a tracker named Mt Hood
 fn alert_notification(update: &tracker_checks::AlertTrackerUpdate) -> [Vec<Vec<String>>; 2] {
     [reply::Format::Full, reply::Format::Brief]
-        .map(|format| reply::format_alert_notification(update, &point(), format, "Mt Hood"))
+        .map(|format| reply::format_alert_notification(update, &point(), format, "Mt Hood", &[]))
 }
 
 // the examples in docs/sms-reply-format.md, given least severe first, so the
@@ -1672,7 +1672,7 @@ fn alert_notification_continues_many_alerts_in_another_response() {
     };
 
     let responses =
-        reply::format_alert_notification(&update, &point(), reply::Format::Brief, "Mt Hood");
+        reply::format_alert_notification(&update, &point(), reply::Format::Brief, "Mt Hood", &[]);
 
     assert_eq!(responses.len(), 2);
     assert_eq!(responses[0].len(), reply::MAX_MESSAGES);
@@ -1703,6 +1703,7 @@ fn daily_forecast(
         format,
         "Camp",
         now(),
+        &[],
     );
     for message in responses.iter().flatten() {
         assert!(
@@ -1811,4 +1812,150 @@ fn daily_forecast_unavailable_in_both_formats() {
         reply::daily_forecast_unavailable(reply::Format::Brief),
         "!no forecast"
     );
+}
+
+// ---- closing lines ----
+
+fn ended(format: reply::Format) -> Vec<String> {
+    reply::closing_lines(false, true, format)
+}
+
+#[test]
+fn closing_lines_put_the_daily_notice_before_tracking_ended() {
+    assert_eq!(
+        reply::closing_lines(true, true, reply::Format::Full),
+        ["Daily forecast unavailable", "Tracking ended"]
+    );
+    assert_eq!(
+        reply::closing_lines(true, true, reply::Format::Brief),
+        ["!no forecast", "Tracking ended"]
+    );
+    assert!(reply::closing_lines(false, false, reply::Format::Full).is_empty());
+}
+
+// the spec's example of a last check with nothing else to send
+#[test]
+fn closing_lines_are_sent_alone_when_the_check_sends_nothing_else() {
+    assert_eq!(
+        reply::format_closing(&ended(reply::Format::Brief), "Mt Hood"),
+        one_message("(1/1) Mt Hood\nTracking ended")
+    );
+    assert!(reply::format_closing(&[], "Mt Hood").is_empty());
+}
+
+// the spec's example: Tracking ended costs no extra message when it fits
+#[test]
+fn tracking_ended_ends_a_notification_in_the_same_message() {
+    let update = tracker_checks::AlertTrackerUpdate::NewAlerts {
+        alerts: vec![alert(
+            "Winter Storm Warning",
+            Some("Severe"),
+            Some("2026-10-07T18:00:00-07:00"),
+        )],
+        stale: false,
+    };
+
+    assert_eq!(
+        reply::format_alert_notification(
+            &update,
+            &point(),
+            reply::Format::Full,
+            "Mt Hood",
+            &ended(reply::Format::Full)
+        ),
+        one_message(
+            "(1/1) Mt Hood\n!Severe: Winter Storm Warning until Wed 10/7 6PM\nTracking ended"
+        )
+    );
+    let avy = avy(4);
+    assert_eq!(
+        reply::format_avy_notification(
+            tracker_checks::AvyTrackerUpdate::NewForecast,
+            Some(&avy),
+            reply::Format::Brief,
+            "Mt Hood",
+            &ended(reply::Format::Brief)
+        ),
+        one_message("(1/1) Mt Hood\nAV4 High\nTracking ended")
+    );
+}
+
+// a notification that sends nothing doesn't send the closing lines either, so
+// the check gives them to another message, or sends them alone
+#[test]
+fn closing_lines_need_a_notification_that_sends_something() {
+    let closing = ended(reply::Format::Full);
+    assert!(
+        reply::format_alert_notification(
+            &tracker_checks::AlertTrackerUpdate::Unchanged,
+            &point(),
+            reply::Format::Full,
+            "Mt Hood",
+            &closing
+        )
+        .is_empty()
+    );
+    assert!(
+        reply::format_avy_notification(
+            tracker_checks::AvyTrackerUpdate::ForecastRestored,
+            None,
+            reply::Format::Full,
+            "Mt Hood",
+            &closing
+        )
+        .is_empty()
+    );
+}
+
+// past 9 messages Tracking ended still ends the last message of the last response
+#[test]
+fn tracking_ended_ends_the_last_response_of_many_alerts() {
+    let update = tracker_checks::AlertTrackerUpdate::NewAlerts {
+        alerts: brief_alerts(30),
+        stale: false,
+    };
+
+    let responses = reply::format_alert_notification(
+        &update,
+        &point(),
+        reply::Format::Brief,
+        "Mt Hood",
+        &ended(reply::Format::Brief),
+    );
+
+    let last = responses.last().and_then(|response| response.last());
+    assert_eq!(
+        last.and_then(|message| message.lines().last()),
+        Some("Tracking ended")
+    );
+    let alert_lines = responses
+        .iter()
+        .flatten()
+        .flat_map(|message| body(message))
+        .filter(|line| line.starts_with('!'))
+        .count();
+    assert_eq!(alert_lines, 30);
+}
+
+// a daily forecast at the last check ends with the closing lines, after today
+#[test]
+fn a_daily_forecast_ends_with_the_closing_lines() {
+    let response = response(Some(calm_tuesday()));
+
+    let responses = reply::format_daily_forecast(
+        &response,
+        &ForecastProperties::default(),
+        reply::Format::Full,
+        "Camp",
+        now(),
+        &ended(reply::Format::Full),
+    );
+
+    let lines: Vec<&str> = responses
+        .iter()
+        .flatten()
+        .flat_map(|message| body(message))
+        .collect();
+    assert!(lines[lines.len() - 2].starts_with("Tue:"), "{lines:?}");
+    assert_eq!(lines.last(), Some(&"Tracking ended"));
 }

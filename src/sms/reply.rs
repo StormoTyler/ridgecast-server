@@ -256,7 +256,8 @@ fn notice_lines(response: &forecast::SmsForecastResponse, format: Format) -> Vec
 // the avalanche notification for what a tracker's avalanche check found, as
 // responses headed with the tracker's name. empty when the update sends nothing.
 // avy is the tracker's stored forecast after the check, which a new forecast
-// replaced. format is the tracker's own, from the request that created it
+// replaced. format is the tracker's own, from the request that created it.
+// closing is the check's closing_lines, given to the last message the check sends
 // unused until the scheduler sends tracker messages, remove the allow then
 #[allow(dead_code)]
 pub fn format_avy_notification(
@@ -264,6 +265,7 @@ pub fn format_avy_notification(
     avy: Option<&AvyProperties>,
     format: Format,
     tracker_name: &str,
+    closing: &[String],
 ) -> Vec<Vec<String>> {
     let lines = match update {
         tracker_checks::AvyTrackerUpdate::NewForecast => match avy {
@@ -303,17 +305,14 @@ pub fn format_avy_notification(
         tracker_checks::AvyTrackerUpdate::Unchanged
         | tracker_checks::AvyTrackerUpdate::ForecastRestored => Vec::new(),
     };
-    if lines.is_empty() {
-        return Vec::new();
-    }
-    let parts: Vec<Part> = lines.into_iter().map(Part::Line).collect();
-    add_headers(pack_messages(&parts), Some(tracker_name))
+    notification(lines, tracker_name, closing)
 }
 
 // the alert notification for what a tracker's alert check found, as responses
 // headed with the tracker's name, of at most MAX_MESSAGES messages each, continuing
 // in more responses so no alert is left out. empty when the update sends nothing.
-// alert times are in the point's time zone. format is the tracker's own
+// alert times are in the point's time zone. format is the tracker's own, and
+// closing is the check's closing_lines, given to the last message the check sends
 // unused until the scheduler sends tracker messages, remove the allow then
 #[allow(dead_code)]
 pub fn format_alert_notification(
@@ -321,6 +320,7 @@ pub fn format_alert_notification(
     point: &Point,
     format: Format,
     tracker_name: &str,
+    closing: &[String],
 ) -> Vec<Vec<String>> {
     // NWS reports a time zone for every point it covers, so UTC is only a fallback
     let tz = daily_forecast::point_time_zone(point).unwrap_or(Tz::UTC);
@@ -336,11 +336,7 @@ pub fn format_alert_notification(
         tracker_checks::AlertTrackerUpdate::Unchanged
         | tracker_checks::AlertTrackerUpdate::CheckableAgain => Vec::new(),
     };
-    if lines.is_empty() {
-        return Vec::new();
-    }
-    let parts: Vec<Part> = lines.into_iter().map(Part::Line).collect();
-    add_headers(pack_messages(&parts), Some(tracker_name))
+    notification(lines, tracker_name, closing)
 }
 
 // a daily forecast tracker's 6 AM message, as responses headed with the tracker's
@@ -349,7 +345,8 @@ pub fn format_alert_notification(
 // the alerts or starts a new message. the response is built like a reply's, with
 // all active alerts and the avalanche line, and no tracker, so it has no tracker
 // line. flags and format are the tracker's own, and now is the check's hour, which
-// decides what today is
+// decides what today is. closing is the check's closing_lines, after today, since
+// the daily forecast is the only message of the check that sends it
 // unused until the scheduler sends tracker messages, remove the allow then
 #[allow(dead_code)]
 pub fn format_daily_forecast(
@@ -358,8 +355,10 @@ pub fn format_daily_forecast(
     format: Format,
     tracker_name: &str,
     now: DateTime<Utc>,
+    closing: &[String],
 ) -> Vec<Vec<String>> {
-    let parts = body_parts(response, format, flags, 1, now);
+    let mut parts = body_parts(response, format, flags, 1, now);
+    parts.extend(closing.iter().cloned().map(Part::Line));
     add_headers(pack_messages(&parts), Some(tracker_name))
 }
 
@@ -377,6 +376,50 @@ pub fn daily_forecast_unavailable(format: Format) -> String {
 }
 
 const DAILY_FORECAST_UNAVAILABLE: &str = "Daily forecast unavailable";
+
+// the last line a tracker sends, at its last check. the same in both formats
+const TRACKING_ENDED: &str = "Tracking ended";
+
+// the lines that end a check's messages, in order: the daily forecast unavailable
+// notice when a daily forecast's last attempt failed, then Tracking ended at the
+// tracker's last check. they go at the end of the last message the check sends,
+// starting a new message only when they don't fit, and are never dropped. when the
+// check sends nothing else, format_closing sends them alone
+// unused until the scheduler sends tracker messages, remove the allow then
+#[allow(dead_code)]
+pub fn closing_lines(daily_unavailable: bool, ended: bool, format: Format) -> Vec<String> {
+    let mut lines = Vec::new();
+    if daily_unavailable {
+        lines.push(daily_forecast_unavailable(format));
+    }
+    if ended {
+        lines.push(TRACKING_ENDED.to_string());
+    }
+    lines
+}
+
+// a check's closing lines on their own, as (1/1) <tracker name>, for a check that
+// sends nothing else. empty when there are none
+// unused until the scheduler sends tracker messages, remove the allow then
+#[allow(dead_code)]
+pub fn format_closing(closing: &[String], tracker_name: &str) -> Vec<Vec<String>> {
+    notification(closing.to_vec(), tracker_name, &[])
+}
+
+// a tracker notification's lines with the check's closing lines after them, packed
+// and headed with the tracker's name. a notification with no lines of its own sends
+// nothing, closing lines included, which then go to another message of the check
+fn notification(lines: Vec<String>, tracker_name: &str, closing: &[String]) -> Vec<Vec<String>> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let parts: Vec<Part> = lines
+        .into_iter()
+        .chain(closing.iter().cloned())
+        .map(Part::Line)
+        .collect();
+    add_headers(pack_messages(&parts), Some(tracker_name))
+}
 
 // ---- avalanche, alert, and tracker lines ----
 

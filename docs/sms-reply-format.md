@@ -109,15 +109,20 @@ notifications. Errors and the help message are always in the full format.
 ### Tracking ended
 
 A tracker is checked every hour, on the hour, and is deleted when it expires.
-Its last check is the last one before it expires: a tracker that expires at
-2:10 PM is last checked at 2:00 PM, and nothing checks it after that. That
+Its last check is the last one at or before it expires: a tracker that
+expires at 2:10 PM, or at 2:00 PM exactly, is last checked at 2:00 PM, and
+nothing checks it after that. A reply shows the expiry to the minute, so a
+tracker shown as ending at 2PM is always checked at 2 PM. That
 check ends the tracker, so it says `Tracking ended` rather than giving the
 expiry time, even though the tracker expires up to an hour later: no alert,
 avalanche forecast, or daily forecast is sent after it.
 
 - When the last check sends a daily forecast or a notification, `Tracking
   ended` is the last line of its last message, which costs no extra message
-  when it fits.
+  when it fits. A check sends its notifications in the reply's order,
+  avalanche then alerts, so it ends the alert notification when there is one.
+- When the same check gives up on that day's daily forecast, `Daily forecast
+  unavailable` (`!no forecast` in brief) comes just before `Tracking ended`.
 - When the last check has nothing else to send, `Tracking ended` is sent alone
   as `(1/1) <tracker name>`.
 - The line is never dropped to stay within a limit. A daily forecast has no
