@@ -1691,3 +1691,124 @@ fn alert_notification_continues_many_alerts_in_another_response() {
         );
     }
 }
+
+// a daily forecast from a tracker named Camp, checked at now(), 9 AM on Tuesday
+fn daily_forecast(
+    response: &forecast::SmsForecastResponse,
+    format: reply::Format,
+) -> Vec<Vec<String>> {
+    let responses = reply::format_daily_forecast(
+        response,
+        &ForecastProperties::default(),
+        format,
+        "Camp",
+        now(),
+    );
+    for message in responses.iter().flatten() {
+        assert!(
+            message.chars().count() <= reply::MESSAGE_LENGTH,
+            "message too long: {message}"
+        );
+    }
+    responses
+}
+
+// calm on Tuesday and on Wednesday
+fn calm_tuesday_and_wednesday() -> forecast::RequestedForecast {
+    let mut forecast = empty_forecast();
+    forecast.wind_speed = floats(
+        "wmoUnit:km_h-1",
+        &[
+            ("2026-10-06T16:00:00+00:00/PT1H", 5.0 * 1.609344),
+            ("2026-10-07T16:00:00+00:00/PT1H", 5.0 * 1.609344),
+        ],
+    );
+    forecast
+}
+
+// the day lines of every message, which start with the day's name
+fn day_lines<'a>(responses: &'a [Vec<String>], day: &str) -> Vec<&'a str> {
+    responses
+        .iter()
+        .flatten()
+        .flat_map(|message| body(message))
+        .filter(|line| line.starts_with(day))
+        .collect()
+}
+
+// a daily forecast has today only, even when the forecast has more days
+#[test]
+fn daily_forecast_has_today_only() {
+    let response = response(Some(calm_tuesday_and_wednesday()));
+
+    for (format, today, tomorrow) in [
+        (reply::Format::Full, "Tue:", "Wed:"),
+        (reply::Format::Brief, "Tu ", "We "),
+    ] {
+        let responses = daily_forecast(&response, format);
+        assert_eq!(day_lines(&responses, today).len(), 1, "{format:?}");
+        assert!(day_lines(&responses, tomorrow).is_empty(), "{format:?}");
+    }
+}
+
+// the avalanche line and every active alert come first, as in a reply, with the
+// stale notice when the alerts are out of date, and there is no tracker line
+#[test]
+fn daily_forecast_lines_follow_the_reply_order() {
+    let mut response = response(Some(calm_tuesday()));
+    response.avy = Some(avy(3));
+    response.alerts = red_flag_and_wind();
+    response.alerts_stale_notice = true;
+
+    let responses = daily_forecast(&response, reply::Format::Full);
+
+    assert_eq!(responses.len(), 1);
+    for message in &responses[0] {
+        assert!(
+            !body(message).is_empty() && message.contains(") Camp\n"),
+            "{message}"
+        );
+    }
+    let lines: Vec<&str> = responses[0]
+        .iter()
+        .flat_map(|message| body(message))
+        .collect();
+    assert_eq!(
+        lines[..4],
+        [
+            "Avy danger 3 Considerable, Mt Hood",
+            "!Alerts may be out of date",
+            "!Severe: Red Flag Warning until Thu 10/8 8PM",
+            "!Moderate: Wind Advisory until Wed 10/7 11AM",
+        ]
+    );
+    assert!(lines[4].starts_with("Tue:"), "{lines:?}");
+    assert_eq!(lines.len(), 5, "{lines:?}");
+}
+
+// a brief reply's days only fill the last message once alerts take 3, but a daily
+// forecast has no fixed limit, so today starts a new message rather than be dropped
+#[test]
+fn daily_forecast_never_drops_today() {
+    let mut response = response(Some(every_field_tuesday()));
+    response.alerts = brief_alerts(9);
+
+    let responses = daily_forecast(&response, reply::Format::Brief);
+
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].len(), 4);
+    assert_eq!(day_lines(&responses, "Tu ").len(), 1);
+    assert!(body(&responses[0][3])[0].starts_with("Tu "));
+}
+
+#[test]
+fn daily_forecast_unavailable_in_both_formats() {
+    assert_eq!(
+        reply::daily_forecast_unavailable(reply::Format::Full),
+        "Daily forecast unavailable"
+    );
+    assert_eq!(
+        reply::daily_forecast_unavailable(reply::Format::Brief),
+        "!no forecast"
+    );
+}

@@ -126,6 +126,27 @@ avalanche forecast, or daily forecast is sent after it.
   check's message is not delivered after its retries, there is no later check
   to send it again.
 
+### Daily forecast
+
+A `daily_forecast` tracker sends today's forecast at 6 AM local time, with the
+same lines as a reply in the same order: notices, avalanche, every active alert
+(not only new ones), then today. It has no tracker line. It replaces that
+check's alert and avalanche notifications, since it already has their lines, and
+the alerts it shows count as sent. When the alerts are out of date it shows
+them with `!Alerts may be out of date`, as a reply does, and when they can't be
+read it shows `!Alerts could not be checked` in their place.
+
+When NWS doesn't return the forecast, that check sends its alert and avalanche
+notifications as usual, so a failed forecast never delays them, and the next
+hourly check tries again: at 6, 7, 8, and 9 AM. If the 9 AM attempt fails too,
+`Daily forecast unavailable` (`!no forecast` in brief) is sent once, at the end
+of that check's notifications or alone, and the next forecast is the next day's.
+
+A forecast whose checks were missed, such as while the server was down, is
+still tried once late, until 4 PM local time on its day. From 4 PM it is skipped
+without a notice, and the next forecast is the next day's. A day's forecast that
+was never sent never holds up the next day's.
+
 ### STOP
 
 Replying `STOP` ends every tracker for that number. The server deletes the
@@ -165,7 +186,7 @@ not name the time zone.
 
 | Line | Meaning |
 |---|---|
-| `Daily forecast unavailable` | The request set `daily_forecast`, but no daily forecast tracker was created because NWS reported no time zone for the location |
+| `Daily forecast unavailable` | In a reply: the request set `daily_forecast`, but no daily forecast tracker was created because NWS reported no time zone for the location. From a tracker: that day's daily forecast could not be fetched by its last attempt (see [Daily forecast](#daily-forecast)) |
 | `Could not create tracker` | The request asked for a tracker, but it could not be saved, even after one retry, matching `TrackerStatus::NotCreated` in `src/sms/forecast.rs`. No tracker messages will be sent, so the user should send the request again. It takes the place of the tracker line, at the top of the reply instead of the bottom |
 
 Notices are the first body lines, above the avalanche line.
@@ -491,6 +512,7 @@ The same local time as the full format, written shorter:
 | Line | Example | Meaning |
 |---|---|---|
 | No tracker notice | `!no tracker` | The full format's `Could not create tracker` notice, matching `TrackerStatus::NotCreated` in `src/sms/forecast.rs` |
+| No forecast notice | `!no forecast` | From a tracker only: the full format's `Daily forecast unavailable`, when a daily forecast could not be fetched by its last attempt. A brief reply has no such notice |
 | Avalanche | `AV3 Considerable` | `AV`, the danger level, and the danger rating |
 | Avalanche no rating | `AV no rating` | The full format's `Avy: no danger rating`, for danger level -1 |
 | Avalanche notice | `AV no forecast`, `AV off season`, `AV unavailable`, `AV may be old` | The same notices as the full format |

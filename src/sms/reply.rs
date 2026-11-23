@@ -235,7 +235,7 @@ fn notice_lines(response: &forecast::SmsForecastResponse, format: Format) -> Vec
     match format {
         Format::Full => {
             if response.daily_notice {
-                lines.push("Daily forecast unavailable".to_string());
+                lines.push(DAILY_FORECAST_UNAVAILABLE.to_string());
             }
             if tracker_failed {
                 lines.push("Could not create tracker".to_string());
@@ -342,6 +342,41 @@ pub fn format_alert_notification(
     let parts: Vec<Part> = lines.into_iter().map(Part::Line).collect();
     add_headers(pack_messages(&parts), Some(tracker_name))
 }
+
+// a daily forecast tracker's 6 AM message, as responses headed with the tracker's
+// name: the response's lines in REPLY_ORDER, with today's forecast only. it has no
+// fixed message limit, so today is never dropped: it fills the space left after
+// the alerts or starts a new message. the response is built like a reply's, with
+// all active alerts and the avalanche line, and no tracker, so it has no tracker
+// line. flags and format are the tracker's own, and now is the check's hour, which
+// decides what today is
+// unused until the scheduler sends tracker messages, remove the allow then
+#[allow(dead_code)]
+pub fn format_daily_forecast(
+    response: &forecast::SmsForecastResponse,
+    flags: &ForecastProperties,
+    format: Format,
+    tracker_name: &str,
+    now: DateTime<Utc>,
+) -> Vec<Vec<String>> {
+    let parts = body_parts(response, format, flags, 1, now);
+    add_headers(pack_messages(&parts), Some(tracker_name))
+}
+
+// the notice sent once when a daily forecast could not be fetched by its last
+// attempt, at the end of that check's notifications or alone. the same full
+// wording as a reply's notice that no daily forecast tracker was created
+// unused until the scheduler sends tracker messages, remove the allow then
+#[allow(dead_code)]
+pub fn daily_forecast_unavailable(format: Format) -> String {
+    match format {
+        Format::Full => DAILY_FORECAST_UNAVAILABLE,
+        Format::Brief => "!no forecast",
+    }
+    .to_string()
+}
+
+const DAILY_FORECAST_UNAVAILABLE: &str = "Daily forecast unavailable";
 
 // ---- avalanche, alert, and tracker lines ----
 
