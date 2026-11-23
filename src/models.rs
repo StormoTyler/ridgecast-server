@@ -36,6 +36,16 @@ pub struct UserPoint {
     // avy_lost, so the off season notice is still sent after any other kind of loss
     #[serde(default)]
     pub avy_off_season: shared::NoticeFlag,
+    // the ids of the NWS alerts the user was sent, so an alert is sent once.
+    // an alert without an id is never recorded, so it is sent on every check.
+    // trackers stored before this field read it as empty
+    #[serde(default)]
+    pub alerts_sent: Vec<String>,
+    // set once the user is told the alerts could not be checked, because they
+    // could not be loaded or were stale with nothing new to send, so the notice
+    // goes out once per outage. trackers stored before this field read it as not raised
+    #[serde(default)]
+    pub alerts_uncheckable: shared::NoticeFlag,
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub time_added: DateTime<Utc>,
     pub valid_duration: u32,

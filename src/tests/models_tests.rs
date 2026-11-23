@@ -32,6 +32,8 @@ pub fn tracker() -> UserPoint {
         avy: None,
         avy_lost: Default::default(),
         avy_off_season: Default::default(),
+        alerts_sent: Vec::new(),
+        alerts_uncheckable: Default::default(),
         time_added: chrono::Utc::now(),
         valid_duration: 24,
         expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
@@ -61,6 +63,23 @@ fn tracker_numbers_are_stored_as_plain_strings_and_validated_when_read() {
             "{field} should be validated when read"
         );
     }
+}
+
+// trackers stored before the alert tracker fields were added still load, as a
+// tracker that was sent no alerts and wasn't told the alerts could not be checked
+#[test]
+fn tracker_without_alert_fields_reads_as_none_sent() {
+    let mut stored = bson::to_document(&tracker()).expect("tracker should serialize");
+    stored
+        .remove("alerts_sent")
+        .expect("alerts_sent should be stored");
+    stored
+        .remove("alerts_uncheckable")
+        .expect("alerts_uncheckable should be stored");
+
+    let read: UserPoint = bson::from_document(stored).expect("old tracker should deserialize");
+    assert!(read.alerts_sent.is_empty());
+    assert!(!read.alerts_uncheckable.is_raised());
 }
 
 // MongoDB's TTL index deletes a tracker by expires_at only when it is a BSON date

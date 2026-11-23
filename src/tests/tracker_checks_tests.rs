@@ -24,6 +24,8 @@ fn make_tracker(avy: Option<AvyProperties>) -> UserPoint {
         avy,
         avy_lost: Default::default(),
         avy_off_season: Default::default(),
+        alerts_sent: Vec::new(),
+        alerts_uncheckable: Default::default(),
         time_added: chrono::Utc::now(),
         valid_duration: 24,
         expires_at: chrono::Utc::now() + chrono::Duration::hours(24),

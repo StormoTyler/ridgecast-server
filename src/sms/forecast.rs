@@ -400,6 +400,8 @@ pub async fn get_requested_forecast(
             avy: if track_avy { avy.clone() } else { None },
             avy_lost: Default::default(),
             avy_off_season: Default::default(),
+            alerts_sent: Vec::new(),
+            alerts_uncheckable: Default::default(),
             time_added,
             valid_duration: *tracker_duration,
             expires_at: expires,
