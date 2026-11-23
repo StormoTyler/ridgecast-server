@@ -11,7 +11,7 @@ use crate::upstream::nws;
 const TEST_DATA: &str = include_str!("test_data/nws_alerts_test_data");
 
 // Red Flag Warning for Gallatin National Forest, has no geometry
-const RED_FLAG_WARNING_ID: &str = "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.98ed8e221a941affa647df5a3746567e0c58d8bc.001.1";
+pub const RED_FLAG_WARNING_ID: &str = "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.98ed8e221a941affa647df5a3746567e0c58d8bc.001.1";
 // Flood Advisory for Glynn, GA, has a polygon
 const FLOOD_ADVISORY_ID: &str = "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.2ec9803dbea4b774a0cc081c7640d75ab17c11d5.001.1";
 

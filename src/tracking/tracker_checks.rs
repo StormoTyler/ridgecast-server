@@ -1,12 +1,12 @@
 // the tracker checks: what a tracker is sent when the scheduler checks it, and
-// how its stored state changes. the avalanche check is here, the alert check
-// will join it. matching a point against the data stays in upstream
+// how its stored state changes, for the avalanche and alert checks. matching a
+// point against the data stays in upstream
 
 use chrono::{DateTime, Utc};
 
 // local modules
-use crate::models::{AvalancheData, Snapshot, UserPoint};
-use crate::upstream::nac;
+use crate::models::{Alert, AlertsSorted, AvalancheData, Snapshot, UserPoint};
+use crate::upstream::{nac, nws};
 
 // what check_avy_tracker found, for the scheduler to act on
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,4 +81,93 @@ fn record_avy_loss(user_point: &mut UserPoint, loss: AvyTrackerUpdate) -> AvyTra
         return AvyTrackerUpdate::Unchanged;
     }
     loss
+}
+
+// what check_alert_tracker found, for the scheduler to act on
+// unused until the scheduler sends the alerts, remove the allow then
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub enum AlertTrackerUpdate {
+    // nothing to send. the tracker may have dropped ids of alerts that ended,
+    // which doesn't need saving, since an ended alert's id doesn't come back
+    Unchanged,
+    // alerts the user hasn't been sent, now recorded in UserPoint.alerts_sent.
+    // send them, with the stale notice first when stale is set, and save the tracker
+    NewAlerts { alerts: Vec<Alert>, stale: bool },
+    // the alerts could not be checked: they could not be loaded, or they are
+    // stale with nothing new. send the could not be checked notice and save the tracker
+    Uncheckable,
+    // fresh alerts after the could not be checked notice, with nothing new.
+    // nothing is sent, but the tracker is saved so the next outage is notified
+    CheckableAgain,
+}
+
+// checks a tracker's location against the current alerts. alerts is None when the
+// alerts could not be loaded. UserPoint.alerts_sent keeps the ids of the alerts the
+// user was sent, so each alert is sent once, and UserPoint.alerts_uncheckable records
+// that they were told the alerts could not be checked, so that is notified once per
+// outage. alerts in a stale snapshot that the user hasn't been sent are still sent,
+// with the stale notice, since the snapshot can be newer than the last check's
+// unused until the scheduler calls it, remove the allow then
+#[allow(dead_code)]
+pub fn check_alert_tracker(
+    user_point: &mut UserPoint,
+    alerts: Option<&Snapshot<AlertsSorted>>,
+) -> AlertTrackerUpdate {
+    let Some(snapshot) = alerts else {
+        return record_uncheckable(user_point);
+    };
+    let active = nws::check_alerts(&snapshot.data, &user_point.point);
+
+    // only alerts which are active are retained
+    user_point.alerts_sent.retain(|sent| {
+        active
+            .iter()
+            .any(|alert| alert.id.as_deref() == Some(sent.as_str()))
+    });
+    let new: Vec<Alert> = active
+        .into_iter()
+        .filter(|alert| match &alert.id {
+            Some(id) => !user_point.alerts_sent.contains(id),
+            // an alert without an id can't be recorded, so it is sent on every
+            // check while it is active, which over reports rather than miss it
+            None => {
+                tracing::warn!(
+                    "check_alert_tracker: {} alert has no id, sending it again",
+                    alert.properties.event.as_deref().unwrap_or("unknown")
+                );
+                true
+            }
+        })
+        .collect();
+    user_point
+        .alerts_sent
+        .extend(new.iter().filter_map(|alert| alert.id.clone()));
+
+    // only fresh alerts show the alerts can be checked again
+    let checked_again = !snapshot.stale && user_point.alerts_uncheckable.is_raised();
+    if !snapshot.stale {
+        user_point.alerts_uncheckable.clear();
+    }
+    if !new.is_empty() {
+        AlertTrackerUpdate::NewAlerts {
+            alerts: new,
+            stale: snapshot.stale,
+        }
+    } else if snapshot.stale {
+        record_uncheckable(user_point)
+    } else if checked_again {
+        AlertTrackerUpdate::CheckableAgain
+    } else {
+        AlertTrackerUpdate::Unchanged
+    }
+}
+
+// the could not be checked notice is sent once, until fresh alerts are checked again
+fn record_uncheckable(user_point: &mut UserPoint) -> AlertTrackerUpdate {
+    if user_point.alerts_uncheckable.raise() {
+        AlertTrackerUpdate::Uncheckable
+    } else {
+        AlertTrackerUpdate::Unchanged
+    }
 }

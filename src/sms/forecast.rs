@@ -385,7 +385,7 @@ pub async fn get_requested_forecast(
     let mut tracker = None;
     if forecast_vars.track_alerts || track_avy || daily_forecast {
         // one tracker covers every option, its forecast_vars record which are on
-        let user_point = UserPoint {
+        let mut user_point = UserPoint {
             id: None,
             user: user.clone(),
             reply_from: reply_from.clone(),
@@ -400,13 +400,27 @@ pub async fn get_requested_forecast(
             avy: if track_avy { avy.clone() } else { None },
             avy_lost: Default::default(),
             avy_off_season: Default::default(),
-            alerts_sent: Vec::new(),
+            // the alerts this reply sends, so the tracker's first check doesn't
+            // send them again. only an alert tracker records them
+            alerts_sent: if forecast_vars.track_alerts {
+                active_alerts
+                    .iter()
+                    .filter_map(|alert| alert.id.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            },
             alerts_uncheckable: Default::default(),
             time_added,
             valid_duration: *tracker_duration,
             expires_at: expires,
             next_daily_forecast,
         };
+        // the reply already says the alerts could not be checked, so the
+        // tracker doesn't send that notice again until they can be
+        if forecast_vars.track_alerts && alerts_notice {
+            user_point.alerts_uncheckable.raise();
+        }
         // the forecast is the safety information, so it is sent even if the
         // tracker can't be saved. the save is retried once, then the user is told
         let name = tracker_name.as_deref().unwrap_or("without name");
