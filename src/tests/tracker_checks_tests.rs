@@ -43,10 +43,10 @@ fn check_tracker(
 ) -> tracker_checks::AvyTrackerUpdate {
     tracker_checks::check_avy_tracker(
         tracker,
-        &Snapshot {
+        Some(&Snapshot {
             data: avy.clone(),
             stale: false,
-        },
+        }),
         now,
     )
 }
@@ -59,10 +59,10 @@ fn check_tracker_stale(
 ) -> tracker_checks::AvyTrackerUpdate {
     tracker_checks::check_avy_tracker(
         tracker,
-        &Snapshot {
+        Some(&Snapshot {
             data: avy.clone(),
             stale: true,
-        },
+        }),
         now,
     )
 }
@@ -481,6 +481,49 @@ fn test_avy_tracker_sends_off_season_again_after_valid_forecast() {
         check_tracker(&mut tracker, &off_season, nac_tests::test_now()),
         tracker_checks::AvyTrackerUpdate::OffSeason
     );
+}
+
+// avalanche data that could not be loaded at all can't confirm the stored
+// forecast, so it is a loss, notified once
+#[test]
+fn test_avy_tracker_unavailable_data_is_a_loss() {
+    let avy = nac_tests::load_avy();
+    let mut tracker = tracker_with_current_forecast(&avy);
+
+    assert_eq!(
+        tracker_checks::check_avy_tracker(&mut tracker, None, nac_tests::test_now()),
+        tracker_checks::AvyTrackerUpdate::DataUnavailable
+    );
+    assert!(tracker.avy_lost.is_raised());
+    assert_eq!(
+        tracker_checks::check_avy_tracker(&mut tracker, None, nac_tests::test_now()),
+        tracker_checks::AvyTrackerUpdate::Unchanged
+    );
+}
+
+// a tracker that never had a valid forecast reports no loss
+#[test]
+fn test_avy_tracker_without_forecast_sends_nothing_on_unavailable_data() {
+    let mut tracker = make_tracker(None);
+
+    assert_eq!(
+        tracker_checks::check_avy_tracker(&mut tracker, None, nac_tests::test_now()),
+        tracker_checks::AvyTrackerUpdate::Unchanged
+    );
+}
+
+// the same forecast valid again after the data was unavailable is not sent again
+#[test]
+fn test_avy_tracker_restores_same_forecast_after_unavailable_data() {
+    let avy = nac_tests::load_avy();
+    let mut tracker = tracker_with_current_forecast(&avy);
+    tracker_checks::check_avy_tracker(&mut tracker, None, nac_tests::test_now());
+
+    assert_eq!(
+        check_tracker(&mut tracker, &avy, nac_tests::test_now()),
+        tracker_checks::AvyTrackerUpdate::ForecastRestored
+    );
+    assert!(!tracker.avy_lost.is_raised());
 }
 
 #[test]

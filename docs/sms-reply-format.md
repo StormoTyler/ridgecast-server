@@ -222,6 +222,9 @@ reason, the tracker sends one notification:
   the avalanche data is out of date. A tracker can't confirm its forecast from
   out of date data, so this counts as losing it, even if the forecast's end
   time hasn't passed.
+- `Avy: data unavailable, try later` if the avalanche data could not be read
+  at all. A tracker can't confirm its forecast without data, so this counts as
+  losing it too.
 - `Avy: no current forecast` for any other reason, including the zone missing
   from the NAC data.
 
@@ -450,7 +453,7 @@ only thing that says which one a message is about.
 |---|---|
 | Daily forecast | The avalanche line, alerts, then today only. No fixed limit: today fills the space left after the alerts or starts a new message, and is never dropped |
 | Alert notification | The new alerts as brief alert lines, such as `!Sev Winter Storm Warning til We7 6PM`. Every new alert is sent, continuing in more messages and responses as in the full format |
-| Avalanche notification | `AV4 High` for a new forecast, `AV no rating`, `AV off season` for an off season loss, `AV no forecast` for any other loss, and `AV no forecast` then `AV may be old` for a loss to out of date data |
+| Avalanche notification | `AV4 High` for a new forecast, `AV no rating`, `AV off season` for an off season loss, `AV no forecast` for any other loss, `AV no forecast` then `AV may be old` for a loss to out of date data, and `AV unavailable` for a loss to data that could not be read |
 | Tracker ended | `Tracking ended`, the same as the full format, as the last line of the last check's message or alone |
 
 ### Brief times

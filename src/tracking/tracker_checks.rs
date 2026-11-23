@@ -26,6 +26,9 @@ pub enum AvyTrackerUpdate {
     // the avalanche data is stale, so the stored forecast can't be confirmed and
     // counts as lost. send "Avy: no current forecast" with the stale notice and save the tracker
     DataStale,
+    // the avalanche data could not be loaded at all, so the stored forecast can't be
+    // confirmed and counts as lost. send "Avy: data unavailable, try later" and save the tracker
+    DataUnavailable,
     // the stored forecast is valid again after a loss. the user already has it,
     // so nothing is sent, but the tracker is saved so the next loss is notified
     ForecastRestored,
@@ -35,14 +38,18 @@ pub enum AvyTrackerUpdate {
 // UserPoint.avy keeps the last valid forecast the user was sent, and
 // UserPoint.avy_lost records that they were told it was lost, so a loss is
 // notified once and a forecast that returns unchanged is not sent again.
-// a stale snapshot counts as losing the forecast
+// a stale snapshot counts as losing the forecast, and so does avalanche data that
+// could not be loaded, which snapshot is None for
 // unused until the scheduler calls it, remove the allow then
 #[allow(dead_code)]
 pub fn check_avy_tracker(
     user_point: &mut UserPoint,
-    snapshot: &Snapshot<AvalancheData>,
+    snapshot: Option<&Snapshot<AvalancheData>>,
     now: DateTime<Utc>,
 ) -> AvyTrackerUpdate {
+    let Some(snapshot) = snapshot else {
+        return record_avy_loss(user_point, AvyTrackerUpdate::DataUnavailable);
+    };
     if snapshot.stale {
         return record_avy_loss(user_point, AvyTrackerUpdate::DataStale);
     }
