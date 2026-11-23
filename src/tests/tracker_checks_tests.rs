@@ -1,6 +1,7 @@
 // tests for tracker_checks::check_avy_tracker and check_alert_tracker against the
-// saved NAC map-layer and NWS alerts responses that nac_tests and nws_tests load
-use chrono::{DateTime, Utc};
+// saved NAC map-layer and NWS alerts responses that nac_tests and nws_tests load,
+// and for the timing of a tracker's last check and daily forecast
+use chrono::{DateTime, TimeZone, Utc};
 
 use crate::messaging;
 use crate::models::{
@@ -738,4 +739,218 @@ fn alert_tracker_stays_uncheckable_on_stale_new_alerts() {
         check(&mut tracker, &stale),
         tracker_checks::AlertTrackerUpdate::Unchanged
     ));
+}
+
+// ---- timing ----
+
+// a check at the top of hour h UTC on Monday 2026-11-23. Denver is UTC-7 then,
+// so 6 AM there is 13:00 UTC
+fn at(h: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 11, 23, h, 0, 0).unwrap()
+}
+
+// a daily forecast tracker in Denver, due at 6 AM local on 2026-11-23
+fn daily_tracker(expires_at: DateTime<Utc>) -> UserPoint {
+    let mut tracker = make_tracker(None);
+    tracker.point.properties.time_zone = Some("America/Denver".to_string());
+    tracker.forecast_vars.daily_forecast = true;
+    tracker.next_daily_forecast = Some(at(13));
+    tracker.expires_at = expires_at;
+    tracker
+}
+
+fn attempt(last: bool) -> tracker_checks::DailyForecastCheck {
+    tracker_checks::DailyForecastCheck::Attempt { last }
+}
+
+#[test]
+fn a_tracker_is_last_checked_in_the_hour_before_it_expires() {
+    let mut tracker = make_tracker(None);
+    tracker.expires_at = at(14) + chrono::Duration::minutes(10);
+
+    assert!(!tracker_checks::is_last_check(&tracker, at(13)));
+    assert!(tracker_checks::is_last_check(&tracker, at(14)));
+    assert!(!tracker_checks::already_ended(&tracker, at(14)));
+    assert!(tracker_checks::already_ended(&tracker, at(15)));
+}
+
+// the expiry is inclusive, so a tracker that expires on the hour is last checked
+// at that hour, like one shown with the same time that expires seconds later
+#[test]
+fn a_tracker_expiring_on_the_hour_is_last_checked_at_that_hour() {
+    let mut tracker = make_tracker(None);
+    tracker.expires_at = at(14);
+
+    assert!(!tracker_checks::is_last_check(&tracker, at(13)));
+    assert!(tracker_checks::is_last_check(&tracker, at(14)));
+    assert!(!tracker_checks::already_ended(&tracker, at(14)));
+    assert!(tracker_checks::already_ended(&tracker, at(15)));
+}
+
+#[test]
+fn a_daily_forecast_is_not_due_before_6am_or_without_one() {
+    let tracker = daily_tracker(at(13) + chrono::Duration::days(2));
+    assert_eq!(
+        tracker_checks::daily_forecast_check(&tracker, at(12)),
+        tracker_checks::DailyForecastCheck::NotDue
+    );
+
+    let mut no_daily = make_tracker(None);
+    no_daily.next_daily_forecast = None;
+    assert_eq!(
+        tracker_checks::daily_forecast_check(&no_daily, at(13)),
+        tracker_checks::DailyForecastCheck::NotDue
+    );
+}
+
+// tried at 6, 7, 8, and 9 AM local, the last at 9 AM
+#[test]
+fn a_daily_forecast_is_tried_from_6am_to_9am() {
+    let tracker = daily_tracker(at(13) + chrono::Duration::days(2));
+
+    for hour in [13, 14, 15] {
+        assert_eq!(
+            tracker_checks::daily_forecast_check(&tracker, at(hour)),
+            attempt(false),
+            "{hour}:00 UTC should not be the last attempt"
+        );
+    }
+    assert_eq!(
+        tracker_checks::daily_forecast_check(&tracker, at(16)),
+        attempt(true)
+    );
+}
+
+// checks that were missed, such as while the server was down, still try the
+// forecast once, as the last attempt
+#[test]
+fn a_late_daily_forecast_is_tried_once() {
+    let tracker = daily_tracker(at(13) + chrono::Duration::days(2));
+
+    assert_eq!(
+        tracker_checks::daily_forecast_check(&tracker, at(17)),
+        attempt(true)
+    );
+}
+
+// a late forecast is still tried until 4 PM local on its day, 22:00 UTC is 3 PM
+#[test]
+fn a_late_daily_forecast_is_tried_until_4pm() {
+    let tracker = daily_tracker(at(13) + chrono::Duration::days(2));
+
+    assert_eq!(
+        tracker_checks::daily_forecast_check(&tracker, at(22)),
+        attempt(true)
+    );
+}
+
+// from 4 PM local, 23:00 UTC, a forecast is too late to send and moves to the next day
+#[test]
+fn a_daily_forecast_is_too_late_from_4pm() {
+    let mut tracker = daily_tracker(at(13) + chrono::Duration::days(2));
+
+    assert_eq!(
+        tracker_checks::daily_forecast_check(&tracker, at(23)),
+        tracker_checks::DailyForecastCheck::TooLate
+    );
+    tracker_checks::advance_daily_forecast(&mut tracker, at(23));
+    assert_eq!(
+        tracker.next_daily_forecast,
+        Some(at(13) + chrono::Duration::days(1))
+    );
+}
+
+// Monday's forecast was never sent, so it is still stored as due. Tuesday's checks
+// are about Tuesday's forecast: at 7 AM it is due, an hour late, not too late
+#[test]
+fn a_past_days_forecast_does_not_hold_up_the_next_days() {
+    let tracker = daily_tracker(at(13) + chrono::Duration::days(3));
+    let tuesday_7am = at(14) + chrono::Duration::days(1);
+
+    assert_eq!(
+        tracker_checks::daily_forecast_check(&tracker, tuesday_7am),
+        attempt(false)
+    );
+}
+
+// before 6 AM on Tuesday, Monday's forecast is too late, and moves to Tuesday's 6 AM
+#[test]
+fn a_past_days_forecast_moves_to_the_next_6am() {
+    let mut tracker = daily_tracker(at(13) + chrono::Duration::days(3));
+    let tuesday_3am = at(10) + chrono::Duration::days(1);
+
+    assert_eq!(
+        tracker_checks::daily_forecast_check(&tracker, tuesday_3am),
+        tracker_checks::DailyForecastCheck::TooLate
+    );
+    tracker_checks::advance_daily_forecast(&mut tracker, tuesday_3am);
+    assert_eq!(
+        tracker.next_daily_forecast,
+        Some(at(13) + chrono::Duration::days(1))
+    );
+}
+
+// the day daylight saving starts is 23 hours long. Saturday's forecast wasn't sent,
+// and Sunday's 6 AM check, 12:00 UTC in MDT, is on time for Sunday's forecast
+#[test]
+fn a_past_days_forecast_does_not_hold_up_the_next_days_across_daylight_saving() {
+    let saturday_6am = Utc.with_ymd_and_hms(2027, 3, 13, 13, 0, 0).unwrap();
+    let sunday_6am = Utc.with_ymd_and_hms(2027, 3, 14, 12, 0, 0).unwrap();
+    let mut tracker = daily_tracker(saturday_6am + chrono::Duration::days(3));
+    tracker.next_daily_forecast = Some(saturday_6am);
+
+    assert_eq!(
+        tracker_checks::daily_forecast_check(&tracker, sunday_6am),
+        attempt(false)
+    );
+}
+
+// no later check can retry the forecast when the tracker ends at this one
+#[test]
+fn a_daily_forecast_at_the_last_check_is_the_last_attempt() {
+    let tracker = daily_tracker(at(13) + chrono::Duration::minutes(30));
+
+    assert_eq!(
+        tracker_checks::daily_forecast_check(&tracker, at(13)),
+        attempt(true)
+    );
+}
+
+// a tracker that ended after its last check's forecast wasn't delivered, so its
+// forecast is still due, can be read before its TTL deletes it, and sends nothing
+#[test]
+fn an_ended_trackers_daily_forecast_is_not_due() {
+    let tracker = daily_tracker(at(13) + chrono::Duration::minutes(30));
+
+    assert_eq!(
+        tracker_checks::daily_forecast_check(&tracker, at(14)),
+        tracker_checks::DailyForecastCheck::NotDue
+    );
+}
+
+// sent at 6 AM or given up at 9 AM, the next daily forecast is 6 AM the next day
+#[test]
+fn a_daily_forecast_advances_to_6am_the_next_day() {
+    let tomorrow_6am = Some(at(13) + chrono::Duration::days(1));
+    for hour in [13, 16] {
+        let mut tracker = daily_tracker(at(13) + chrono::Duration::days(2));
+        tracker_checks::advance_daily_forecast(&mut tracker, at(hour));
+        assert_eq!(
+            tracker.next_daily_forecast, tomorrow_6am,
+            "advanced at {hour}:00 UTC"
+        );
+    }
+}
+
+#[test]
+fn a_daily_forecast_stops_when_no_6am_is_left() {
+    let mut tracker = daily_tracker(at(20));
+
+    tracker_checks::advance_daily_forecast(&mut tracker, at(13));
+
+    assert_eq!(tracker.next_daily_forecast, None);
+    assert_eq!(
+        tracker_checks::daily_forecast_check(&tracker, at(14)),
+        tracker_checks::DailyForecastCheck::NotDue
+    );
 }
