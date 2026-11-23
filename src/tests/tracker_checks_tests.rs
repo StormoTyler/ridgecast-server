@@ -997,3 +997,97 @@ fn a_daily_forecast_stops_when_no_6am_is_left() {
         tracker_checks::DailyForecastCheck::NotDue
     );
 }
+
+// ---- the whole check ----
+
+// a tracker in the Tetons zone tracking alerts and avalanche forecasts, sent nothing
+// yet. its point's SAME code matches no alert in the test data
+fn tetons_tracker() -> UserPoint {
+    let mut tracker = make_tracker(None);
+    tracker.forecast_vars.track_alerts = true;
+    tracker.expires_at = nac_tests::test_now() + chrono::Duration::days(1);
+    tracker
+}
+
+fn fresh_avy(avy: AvalancheData) -> Snapshot<AvalancheData> {
+    Snapshot {
+        data: avy,
+        stale: false,
+    }
+}
+
+// every check the tracker has runs, and changes the tracker
+#[test]
+fn check_tracker_runs_every_check_the_tracker_has() {
+    let avy = fresh_avy(nac_tests::load_avy());
+    let alerts = snapshot(false);
+    let mut tracker = tetons_tracker();
+
+    let check = tracker_checks::check_tracker(
+        &mut tracker,
+        Some(&alerts),
+        Some(&avy),
+        nac_tests::test_now(),
+    )
+    .expect("the tracker hasn't ended");
+
+    assert_eq!(
+        check.avy,
+        Some(tracker_checks::AvyTrackerUpdate::NewForecast)
+    );
+    assert!(tracker.avy.is_some(), "the new forecast should be stored");
+    assert!(matches!(
+        check.alerts,
+        Some(tracker_checks::AlertTrackerUpdate::Unchanged)
+    ));
+    assert_eq!(check.daily, tracker_checks::DailyForecastCheck::NotDue);
+    assert!(!check.ended);
+}
+
+// a check the tracker doesn't have is left out, rather than run
+#[test]
+fn check_tracker_leaves_out_checks_the_tracker_does_not_have() {
+    let mut tracker = tetons_tracker();
+    tracker.forecast_vars.track_avy = false;
+
+    // neither snapshot could be loaded, which only the alert check reports
+    let check = tracker_checks::check_tracker(&mut tracker, None, None, nac_tests::test_now())
+        .expect("the tracker hasn't ended");
+
+    assert_eq!(check.avy, None);
+    assert!(matches!(
+        check.alerts,
+        Some(tracker_checks::AlertTrackerUpdate::Uncheckable)
+    ));
+}
+
+// the previous check ended the tracker, so nothing is checked or changed
+#[test]
+fn check_tracker_skips_an_ended_tracker() {
+    let mut tracker = alert_tracker(bozeman());
+    tracker.expires_at = at(13);
+
+    assert!(tracker_checks::check_tracker(&mut tracker, None, None, at(14)).is_none());
+    assert!(!tracker.alerts_uncheckable.is_raised());
+}
+
+// the daily forecast and the last check are reported with the other checks, so
+// the scheduler can send the daily forecast instead of the notifications
+#[test]
+fn check_tracker_reports_the_daily_forecast_and_the_last_check() {
+    let mut tracker = daily_tracker(at(13) + chrono::Duration::minutes(30));
+    tracker.forecast_vars.track_alerts = true;
+    tracker.point = bozeman();
+    tracker.point.properties.time_zone = Some("America/Denver".to_string());
+    let alerts = snapshot(false);
+
+    let check = tracker_checks::check_tracker(&mut tracker, Some(&alerts), None, at(13))
+        .expect("the tracker hasn't ended");
+
+    assert_eq!(check.daily, attempt(true));
+    assert!(check.ended);
+    // the alert check still ran, so the alert the daily forecast shows is recorded
+    let (sent, _) = new_alerts(check.alerts.expect("the tracker tracks alerts"));
+    assert_eq!(sent, vec![nws_tests::RED_FLAG_WARNING_ID]);
+    assert_eq!(tracker.alerts_sent, vec![nws_tests::RED_FLAG_WARNING_ID]);
+}

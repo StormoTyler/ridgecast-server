@@ -1,7 +1,7 @@
 // the tracker checks: what a tracker is sent when the scheduler checks it, and
 // how its stored state changes, for the avalanche and alert checks, and when a
-// check is a tracker's last or sends its daily forecast. matching a point against
-// the data stays in upstream
+// check is a tracker's last or sends its daily forecast. check_tracker runs them
+// all for one tracker. matching a point against the data stays in upstream
 
 use chrono::{DateTime, TimeDelta, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
@@ -40,8 +40,6 @@ pub enum AvyTrackerUpdate {
 // notified once and a forecast that returns unchanged is not sent again.
 // a stale snapshot counts as losing the forecast, and so does avalanche data that
 // could not be loaded, which snapshot is None for
-// unused until the scheduler calls it, remove the allow then
-#[allow(dead_code)]
 pub fn check_avy_tracker(
     user_point: &mut UserPoint,
     snapshot: Option<&Snapshot<AvalancheData>>,
@@ -118,8 +116,6 @@ pub enum AlertTrackerUpdate {
 // that they were told the alerts could not be checked, so that is notified once per
 // outage. alerts in a stale snapshot that the user hasn't been sent are still sent,
 // with the stale notice, since the snapshot can be newer than the last check's
-// unused until the scheduler calls it, remove the allow then
-#[allow(dead_code)]
 pub fn check_alert_tracker(
     user_point: &mut UserPoint,
     alerts: Option<&Snapshot<AlertsSorted>>,
@@ -198,8 +194,6 @@ const CHECK_INTERVAL: TimeDelta = TimeDelta::hours(1);
 // the previous check already ended the tracker, so nothing more is sent. its TTL
 // index deletes it, but MongoDB's TTL process runs about once a minute, so the
 // check can still read it
-// unused until the scheduler calls it, remove the allow then
-#[allow(dead_code)]
 pub fn already_ended(user_point: &UserPoint, hour: DateTime<Utc>) -> bool {
     user_point.expires_at < hour
 }
@@ -208,8 +202,6 @@ pub fn already_ended(user_point: &UserPoint, hour: DateTime<Utc>) -> bool {
 // Tracking ended. the expiry is inclusive, since replies show it to the minute: a
 // tracker shown as until 2PM is last checked at 2:00 PM, whether it expires at
 // 2:00:00 or 2:00:30, and one that expires at 2:10 PM is too
-// unused until the scheduler calls it, remove the allow then
-#[allow(dead_code)]
 pub fn is_last_check(user_point: &UserPoint, hour: DateTime<Utc>) -> bool {
     !already_ended(user_point, hour) && user_point.expires_at < hour + CHECK_INTERVAL
 }
@@ -247,8 +239,6 @@ pub enum DailyForecastCheck {
 // still today's, until DAILY_FORECAST_CUTOFF_HOUR. an ended tracker's forecast is
 // never due, even when it was still due at its last check because that forecast
 // wasn't delivered
-// unused until the scheduler calls it, remove the allow then
-#[allow(dead_code)]
 pub fn daily_forecast_check(user_point: &UserPoint, hour: DateTime<Utc>) -> DailyForecastCheck {
     let Some(stored_due) = user_point.next_daily_forecast else {
         return DailyForecastCheck::NotDue;
@@ -308,4 +298,57 @@ pub fn advance_daily_forecast(user_point: &mut UserPoint, hour: DateTime<Utc>) {
             None
         }
     };
+}
+
+// ---- the whole check ----
+
+// what one hourly check of a tracker found. the scheduler decides what to send:
+// a daily forecast that is fetched replaces the hour's notifications, and when it
+// can't be fetched the notifications are sent as usual
+// unused until the scheduler calls check_tracker, remove the allow then
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct TrackerCheck {
+    // None when the tracker doesn't track avalanche forecasts
+    pub avy: Option<AvyTrackerUpdate>,
+    // None when the tracker doesn't track alerts
+    pub alerts: Option<AlertTrackerUpdate>,
+    pub daily: DailyForecastCheck,
+    // this is the tracker's last check, so its message ends with Tracking ended,
+    // or Tracking ended is sent alone when there is nothing else
+    pub ended: bool,
+}
+
+// checks one tracker for the hourly check at hour, the top of the hour, with the
+// snapshots the scheduler loaded once for that check (None when one couldn't be
+// loaded). None when the previous check already ended the tracker, so nothing is
+// sent or saved. every check the tracker has runs, even when a daily forecast is
+// due, so its stored state stays right whichever message is sent. hour is also the
+// avalanche check's now, so the whole check uses one time. the tracker is changed in
+// place, so the scheduler checks a copy and saves it only once its messages are sent
+// unused until the scheduler calls it, remove the allow then
+#[allow(dead_code)]
+pub fn check_tracker(
+    user_point: &mut UserPoint,
+    alerts: Option<&Snapshot<AlertsSorted>>,
+    avy: Option<&Snapshot<AvalancheData>>,
+    hour: DateTime<Utc>,
+) -> Option<TrackerCheck> {
+    if already_ended(user_point, hour) {
+        return None;
+    }
+    let avy = user_point
+        .forecast_vars
+        .track_avy
+        .then(|| check_avy_tracker(user_point, avy, hour));
+    let alerts = user_point
+        .forecast_vars
+        .track_alerts
+        .then(|| check_alert_tracker(user_point, alerts));
+    Some(TrackerCheck {
+        avy,
+        alerts,
+        daily: daily_forecast_check(user_point, hour),
+        ended: is_last_check(user_point, hour),
+    })
 }

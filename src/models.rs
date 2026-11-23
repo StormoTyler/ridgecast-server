@@ -108,18 +108,6 @@ pub struct ForecastProperties {
 
 // end user data models
 
-// data structures for checking and responding to trackers
-
-// unused until the scheduler builds it, remove the allow then
-#[allow(dead_code)]
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TrackerResponse {
-    pub user: UserPoint,
-    pub alerts: Option<Vec<Alert>>,
-    pub avy: Option<AvyProperties>,
-    pub daily: Option<Properties>,
-}
-
 // data structures for nws points endpoint
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

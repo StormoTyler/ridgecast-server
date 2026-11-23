@@ -66,50 +66,13 @@ pub async fn refresh_avy(db: database::DB) {
 
 // checks every tracker hourly on the hour
 // i.e. checks at 00:00, 01:00 ... 23:00
-// for each UserPoint in the point_collection
 // unused until the tracker checks are implemented, remove the allow then
 #[allow(dead_code)]
 async fn check_trackers() {
-    // retrieve each UserPoint in point_collection
-    // load alerts snapshot
-    // load avalanche snapshot
-    // then call check_tracker on the point
+    // read every tracker in the points collection into memory first, rather than
+    // streaming them from a cursor: the TTL index deletes a tracker about a minute
+    // after it expires, so a slow check could lose one before its last check
+    // load the alerts and avalanche snapshots once for the whole check
+    // then for each tracker, on a copy: tracker_checks::check_tracker, send what it
+    // found, and database::update_tracker once the messages are sent
 }
-
-// pseudocode until the tracker checks are implemented, commented out so the
-// module compiles and the refresh loops can run
-/*
-async fn check_tracker(user_point: UserPoint, alerts: )
-{
-    let point: Point = user_point.point
-
-    if user_point.forecast_vars.track_alerts
-    {
-        nws:check_alerts(point);
-    }
-
-    if user_point.forecast_vars.track_avy
-    {
-        nac:check_avy(point);
-    }
-
-    // gets daily weather forecast if the daily_forecast option is true
-    // and it is 6am in the time zone of user_point
-    if user_point.forecast_vars.daily_forecast && 6am user time
-    {
-        nws:get_gridpoints(point);
-    }
-
-    // assemble each of the reponses into a TrackerResponse
-    let response TrackerResponse
-    {
-
-    };
-
-    // in the future will make a call to a function in the sms module
-    // to send a message to the user if there is a new daily forecast
-    // new alerts or new avalanche forecast
-    // provide logic to check this, but do not call any function
-    // at this time
-}
-*/
