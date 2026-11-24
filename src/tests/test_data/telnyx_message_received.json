@@ -1,0 +1,48 @@
+{
+  "data": {
+    "event_type": "message.received",
+    "id": "e3a0c1f2-7b6d-4c1e-9a55-0f1d2c3b4a59",
+    "occurred_at": "2026-11-23T12:00:00.000+00:00",
+    "payload": {
+      "autoresponse_type": null,
+      "cc": [],
+      "completed_at": null,
+      "cost": null,
+      "direction": "inbound",
+      "encoding": "GSM-7",
+      "errors": [],
+      "from": {
+        "carrier": "T-Mobile USA",
+        "line_type": "long_code",
+        "phone_number": "+15415550123",
+        "status": "webhook_delivered"
+      },
+      "id": "4f1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "media": [],
+      "messaging_profile_id": "40017f2a-1b2c-4d3e-8f4a-5b6c7d8e9f00",
+      "parts": 1,
+      "received_at": "2026-11-23T11:59:59.000+00:00",
+      "record_type": "message",
+      "sent_at": null,
+      "tags": [],
+      "text": "RC1 45.3735 -121.6959 0000 0 2",
+      "to": [
+        {
+          "carrier": "Telnyx",
+          "line_type": "Toll-Free",
+          "phone_number": "+18005550100",
+          "status": "webhook_delivered"
+        }
+      ],
+      "type": "SMS",
+      "valid_until": null,
+      "webhook_failover_url": null,
+      "webhook_url": "https://example.com/webhooks/telnyx"
+    },
+    "record_type": "event"
+  },
+  "meta": {
+    "attempt": 1,
+    "delivered_to": "https://example.com/webhooks/telnyx"
+  }
+}

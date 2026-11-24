@@ -1,11 +1,17 @@
-// tests for the Telnyx provider: its configuration, and its sender against a
-// local mock of the Telnyx API
+// tests for the Telnyx provider: its configuration, its sender against a local
+// mock of the Telnyx API, its webhook signature check, and its webhook route.
+// the route's end-to-end test needs MongoDB, so it is ignored by default (see
+// test_db)
 use base64::Engine;
 use wiremock::matchers::{bearer_token, body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::messaging;
+use crate::sms::{reply, user_numbers};
 use crate::sms_providers::telnyx;
+use crate::state;
+use crate::tests;
+use crate::tests::{fake_sender, test_db};
 
 const API_KEY: &str = "KEY0123456789ABCDEF";
 
@@ -458,4 +464,248 @@ fn an_extreme_timestamp_is_rejected_without_overflow() {
             "{error:?}"
         );
     }
+}
+
+// ---- the webhook ----
+
+// webhooks shaped like the examples in Telnyx's docs, with placeholder numbers
+// and ids: an inbound text, and a delivery report for a message sent
+const MESSAGE_RECEIVED: &str = include_str!("test_data/telnyx_message_received.json");
+const MESSAGE_FINALIZED: &str = include_str!("test_data/telnyx_message_finalized.json");
+
+// the fixtures use the sender tests' numbers: a text comes from the user (TO)
+// to the server's number (FROM)
+
+// the inbound text's message id, not the event id beside it
+const MESSAGE_ID: &str = "4f1b2c3d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+
+// the headers Telnyx would send with this body, signed at this time
+fn signed_headers(body: &[u8], at: chrono::DateTime<chrono::Utc>) -> axum::http::HeaderMap {
+    let timestamp = at.timestamp().to_string();
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        "telnyx-signature-ed25519",
+        sign(&signing_key(), &timestamp, body).parse().unwrap(),
+    );
+    headers.insert("telnyx-timestamp", timestamp.parse().unwrap());
+    headers
+}
+
+// a fixture with a change made, as the bytes Telnyx would send
+fn edited(fixture: &str, edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
+    let mut webhook: serde_json::Value = serde_json::from_str(fixture).unwrap();
+    edit(&mut webhook);
+    serde_json::to_vec(&webhook).unwrap()
+}
+
+// reads a body as the route does, signed 1 second before webhook_now
+fn read(body: &[u8]) -> telnyx::Webhook {
+    let sent = webhook_now() - chrono::Duration::seconds(1);
+    telnyx::read_webhook(
+        &signing_key().verifying_key(),
+        &signed_headers(body, sent),
+        body,
+        webhook_now(),
+    )
+}
+
+fn read_text(body: &[u8]) -> messaging::InboundMessage {
+    match read(body) {
+        telnyx::Webhook::Inbound(message) => message,
+        other => panic!("should be an inbound text, was {other:?}"),
+    }
+}
+
+fn assert_dropped(body: &[u8]) {
+    let webhook = read(body);
+    assert!(
+        matches!(webhook, telnyx::Webhook::Dropped(_)),
+        "should be dropped, was {webhook:?}"
+    );
+}
+
+fn payload(webhook: &mut serde_json::Value) -> &mut serde_json::Value {
+    &mut webhook["data"]["payload"]
+}
+
+#[test]
+fn an_inbound_text_is_read() {
+    let message = read_text(MESSAGE_RECEIVED.as_bytes());
+    assert_eq!(message.from, messaging::PhoneNumber::new(TO).unwrap());
+    assert_eq!(message.to, messaging::PhoneNumber::new(FROM).unwrap());
+    assert_eq!(message.body, "RC1 45.3735 -121.6959 0000 0 2");
+    assert_eq!(
+        message.received_at,
+        webhook_now() - chrono::Duration::seconds(1)
+    );
+    // the same in every delivery of the webhook, so duplicates can be dropped
+    assert_eq!(message.provider_message_id, MESSAGE_ID);
+}
+
+// nothing is parsed before the signature is checked
+#[test]
+fn a_webhook_with_a_bad_signature_is_rejected() {
+    let body = MESSAGE_RECEIVED.as_bytes();
+    let mut headers = signed_headers(body, webhook_now());
+    headers.insert(
+        "telnyx-signature-ed25519",
+        sign(&signing_key(), "1", body).parse().unwrap(),
+    );
+    let webhook = telnyx::read_webhook(
+        &signing_key().verifying_key(),
+        &headers,
+        body,
+        webhook_now(),
+    );
+    assert!(matches!(
+        webhook,
+        telnyx::Webhook::Rejected(telnyx::SignatureError::BadSignature)
+    ));
+}
+
+#[test]
+fn a_webhook_without_headers_is_rejected() {
+    let webhook = telnyx::read_webhook(
+        &signing_key().verifying_key(),
+        &axum::http::HeaderMap::new(),
+        MESSAGE_RECEIVED.as_bytes(),
+        webhook_now(),
+    );
+    assert!(matches!(
+        webhook,
+        telnyx::Webhook::Rejected(telnyx::SignatureError::MissingHeader)
+    ));
+}
+
+#[test]
+fn a_delivery_report_is_ignored_by_its_event_type() {
+    let webhook = read(MESSAGE_FINALIZED.as_bytes());
+    assert!(
+        matches!(&webhook, telnyx::Webhook::Ignored(event_type) if event_type == "message.finalized"),
+        "should be ignored, was {webhook:?}"
+    );
+}
+
+// signed, so it came from Telnyx, but it can never be read
+#[test]
+fn a_signed_body_that_isnt_a_webhook_is_dropped() {
+    assert_dropped(b"not json");
+    assert_dropped(br#"{"data": {}}"#);
+    assert_dropped(&edited(MESSAGE_RECEIVED, |webhook| {
+        payload(webhook)["from"] = serde_json::json!(TO);
+    }));
+}
+
+// a short code or an alphanumeric sender can't be replied to
+#[test]
+fn a_sender_that_isnt_a_phone_number_is_dropped() {
+    for sender in ["12345", "RidgeCast"] {
+        assert_dropped(&edited(MESSAGE_RECEIVED, |webhook| {
+            payload(webhook)["from"]["phone_number"] = serde_json::json!(sender);
+        }));
+    }
+}
+
+// a text is answered only when it was sent to exactly one number, the one the
+// reply comes from. a text sent to no number, or a group text, which lists
+// every recipient, is dropped and nobody is replied to
+#[test]
+fn a_text_not_sent_to_exactly_one_number_is_dropped() {
+    for to in [
+        serde_json::json!([]),
+        serde_json::json!([{"phone_number": FROM}, {"phone_number": "+15415550124"}]),
+    ] {
+        assert_dropped(&edited(MESSAGE_RECEIVED, |webhook| {
+            payload(webhook)["to"] = to;
+        }));
+    }
+}
+
+// messages with bodies that aren't text are rejected
+#[test]
+fn a_text_with_no_text_has_an_empty_body() {
+    let body = edited(MESSAGE_RECEIVED, |webhook| {
+        payload(webhook)["text"] = serde_json::Value::Null;
+    });
+    assert_eq!(read_text(&body).body, "");
+}
+
+// the core reads its own clock, so a missing or unreadable time isn't an error
+#[test]
+fn received_at_falls_back_to_the_event_time_then_the_clock() {
+    // occurred_at differs from the clock, so the time can only have come from it
+    let unreadable_received_at = edited(MESSAGE_RECEIVED, |webhook| {
+        payload(webhook)["received_at"] = serde_json::json!("yesterday");
+        webhook["data"]["occurred_at"] = serde_json::json!("2026-11-23T11:59:58.000+00:00");
+    });
+    assert_eq!(
+        read_text(&unreadable_received_at).received_at,
+        webhook_now() - chrono::Duration::seconds(2)
+    );
+
+    let missing_both = edited(MESSAGE_RECEIVED, |webhook| {
+        payload(webhook)
+            .as_object_mut()
+            .unwrap()
+            .remove("received_at");
+        webhook["data"]["occurred_at"] = serde_json::Value::Null;
+    });
+    assert_eq!(read_text(&missing_both).received_at, webhook_now());
+}
+
+// the route end to end: a signed text is answered 200 and handled in the
+// background, and an unsigned one is 401 and never handled. the text isn't a
+// request, so the reply is the help message and nothing calls NWS
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn the_route_answers_and_then_handles_a_text() {
+    tests::set_support_email();
+    let db = test_db::fresh("telnyx_route").await;
+    let sender = std::sync::Arc::new(fake_sender::FakeSender::default());
+    let state = state::AppState {
+        db: db.clone(),
+        numbers: state::Numbers::from_values(Some(FROM), None).unwrap(),
+        number_key: user_numbers::NumberKey::from_value(Some("0123456789abcdef0123456789abcdef"))
+            .unwrap(),
+        sender: sender.clone(),
+    };
+    let app = telnyx::routes(signing_key().verifying_key()).with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}{}",
+        listener.local_addr().unwrap(),
+        telnyx::WEBHOOK_PATH
+    );
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let body = edited(MESSAGE_RECEIVED, |webhook| {
+        payload(webhook)["text"] = serde_json::json!("hello");
+    });
+    let client = reqwest::Client::new();
+
+    let unsigned = client.post(&url).body(body.clone()).send().await.unwrap();
+    assert_eq!(unsigned.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    // signed now, since the route reads the real clock
+    let signed = client
+        .post(&url)
+        .headers(signed_headers(&body, chrono::Utc::now()))
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(signed.status(), reqwest::StatusCode::OK);
+
+    // the reply is sent after the answer, so wait for it
+    for _ in 0..50 {
+        if !sender.attempted().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(sender.attempted(), vec![reply::help_message()]);
+    let attempts = sender.attempts.lock().unwrap().clone();
+    assert_eq!(attempts[0].0, messaging::PhoneNumber::new(FROM).unwrap());
+    assert_eq!(attempts[0].1, messaging::PhoneNumber::new(TO).unwrap());
+    test_db::remove(db).await;
 }

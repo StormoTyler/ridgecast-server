@@ -1,16 +1,24 @@
 // the Telnyx provider. so far its configuration (the API key messages are sent
 // with, and the public key webhook signatures are checked against), its
-// sender, and its webhook signature check. it is added to sms_providers once it
-// answers texts correctly: receiving them, dropping duplicate deliveries, and
-// handling STOP, HELP, and START, so SMS_PROVIDER can never pick a Telnyx
+// sender, its webhook signature check, and its webhook route. it is added to
+// sms_providers once it answers texts correctly: dropping duplicate deliveries,
+// and handling STOP, HELP, and START, so SMS_PROVIDER can never pick a Telnyx
 // provider that answers a STOP with the help message or replies twice.
 // nothing here is used until then, so dead code is allowed for the whole file;
 // remove this when the provider is added
 #![allow(dead_code)]
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use axum::{
+    Router,
+    body::Bytes,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    routing::post,
+};
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -18,6 +26,8 @@ use thiserror::Error;
 
 // local modules
 use crate::messaging;
+use crate::sms::inbound;
+use crate::state;
 
 // the Telnyx API. TelnyxSender takes its base URL, so tests can point it at a mock
 pub const BASE_URL: &str = "https://api.telnyx.com";
@@ -316,4 +326,178 @@ fn send_error(status: reqwest::StatusCode, body: &str) -> messaging::SendError {
     } else {
         messaging::SendError::Permanent(message)
     }
+}
+
+// ---- the webhook ----
+
+// where Telnyx posts webhooks, set as the messaging profile's webhook URL
+pub const WEBHOOK_PATH: &str = "/webhooks/telnyx";
+
+const SIGNATURE_HEADER: &str = "telnyx-signature-ed25519";
+const TIMESTAMP_HEADER: &str = "telnyx-timestamp";
+
+// the route Telnyx posts webhooks to. the public key is held by the route, so
+// the server's state never holds anything of a provider's
+pub fn routes(public_key: ed25519_dalek::VerifyingKey) -> Router<state::AppState> {
+    let public_key = Arc::new(public_key);
+    Router::new().route(
+        WEBHOOK_PATH,
+        post(
+            move |State(state): State<state::AppState>, headers: HeaderMap, body: Bytes| {
+                let public_key = Arc::clone(&public_key);
+                async move { webhook(state, &public_key, &headers, &body) }
+            },
+        ),
+    )
+}
+
+// answers Telnyx at once and handles a text in the background: Telnyx wants an
+// answer within about 2 seconds, and a forecast reply can take longer. a
+// rejected webhook is 401, anything signed is 200, so Telnyx doesn't retry
+// what would never succeed
+fn webhook(
+    state: state::AppState,
+    public_key: &ed25519_dalek::VerifyingKey,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> StatusCode {
+    match read_webhook(public_key, headers, body, Utc::now()) {
+        Webhook::Rejected(error) => {
+            tracing::warn!("telnyx: webhook rejected: {error}");
+            StatusCode::UNAUTHORIZED
+        }
+        Webhook::Ignored(event_type) => {
+            tracing::debug!("telnyx: ignored a {event_type} webhook");
+            StatusCode::OK
+        }
+        Webhook::Dropped(reason) => {
+            tracing::warn!("telnyx: inbound text dropped: {reason}");
+            StatusCode::OK
+        }
+        Webhook::Inbound(message) => {
+            tokio::spawn(async move {
+                // inbound::handle results in either a message being dropped
+                // or message(s) being sent with TelnyxSender::send
+                inbound::handle(
+                    &message,
+                    &state.numbers,
+                    &state.number_key,
+                    &state.db,
+                    state.sender.as_ref(),
+                )
+                .await;
+            });
+            StatusCode::OK
+        }
+    }
+}
+
+// what a webhook is, once read. none of them holds the body or a number in the
+// clear, so each can be logged
+#[derive(Debug)]
+pub enum Webhook {
+    // not from Telnyx, or too late: answered 401
+    Rejected(SignatureError),
+    // from Telnyx but not an inbound text, such as a delivery report, by its
+    // event type
+    Ignored(String),
+    // an inbound text, or a body, that can't be answered: a sender that isn't
+    // a phone number, a group text, or a payload that can't be read
+    Dropped(&'static str),
+    Inbound(messaging::InboundMessage),
+}
+
+// a webhook: {"data": {"event_type", "occurred_at", "payload"}}. the payload's
+// shape depends on the event type, so it is read only for an inbound text
+#[derive(Deserialize)]
+struct Envelope {
+    data: Event,
+}
+
+#[derive(Deserialize)]
+struct Event {
+    event_type: String,
+    occurred_at: Option<String>,
+    #[serde(default)]
+    payload: serde_json::Value,
+}
+
+// a message.received payload, of which only these fields are read. from is an
+// object and to an array, since a group text has several recipients
+#[derive(Deserialize)]
+struct InboundPayload {
+    // the message's id, the same in every delivery of its webhook
+    id: String,
+    from: Endpoint,
+    to: Vec<Endpoint>,
+    // null for a picture with no text
+    text: Option<String>,
+    received_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Endpoint {
+    phone_number: String,
+}
+
+// reads a webhook's headers and raw body. the signature is checked before the
+// body is parsed, so nothing unsigned is read. parse errors aren't kept, since
+// serde's messages can quote a value, such as a number
+pub fn read_webhook(
+    public_key: &ed25519_dalek::VerifyingKey,
+    headers: &HeaderMap,
+    body: &[u8],
+    now: DateTime<Utc>,
+) -> Webhook {
+    let header = |name| headers.get(name).and_then(|value| value.to_str().ok());
+    if let Err(error) = verify_signature(
+        public_key,
+        header(TIMESTAMP_HEADER),
+        header(SIGNATURE_HEADER),
+        body,
+        now,
+    ) {
+        return Webhook::Rejected(error);
+    }
+
+    let Ok(envelope) = serde_json::from_slice::<Envelope>(body) else {
+        return Webhook::Dropped("the body is not a Telnyx webhook");
+    };
+    let event = envelope.data;
+    if event.event_type != "message.received" {
+        return Webhook::Ignored(event.event_type);
+    }
+    let Ok(payload) = serde_json::from_value::<InboundPayload>(event.payload) else {
+        return Webhook::Dropped("the text's payload could not be read");
+    };
+
+    // a short code or an alphanumeric sender can't be replied to
+    let Ok(from) = messaging::PhoneNumber::new(payload.from.phone_number) else {
+        return Webhook::Dropped("the sender is not an E.164 number");
+    };
+    // whether it was sent to one of the server's numbers is the core's decision
+    let [to] = payload.to.as_slice() else {
+        return Webhook::Dropped("not sent to exactly one number, such as a group text");
+    };
+    let Ok(to) = messaging::PhoneNumber::new(to.phone_number.as_str()) else {
+        return Webhook::Dropped("the number texted is not an E.164 number");
+    };
+
+    let received_at = parse_time(payload.received_at.as_deref())
+        .or_else(|| parse_time(event.occurred_at.as_deref()))
+        .unwrap_or(now);
+    Webhook::Inbound(messaging::InboundMessage {
+        from,
+        to,
+        body: payload.text.unwrap_or_default(),
+        received_at,
+        provider_message_id: payload.id,
+    })
+}
+
+// Telnyx's times are RFC 3339, such as 2026-11-23T12:00:00.000+00:00
+fn parse_time(value: Option<&str>) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value?)
+        .ok()
+        .map(|time| time.with_timezone(&Utc))
 }

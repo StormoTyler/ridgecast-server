@@ -1,0 +1,39 @@
+{
+  "data": {
+    "event_type": "message.finalized",
+    "id": "a7c2e9d4-3f1b-4e8a-b6c5-2d9e0f1a3b47",
+    "occurred_at": "2026-11-23T12:00:05.000+00:00",
+    "payload": {
+      "completed_at": "2026-11-23T12:00:05.000+00:00",
+      "cost": null,
+      "direction": "outbound",
+      "encoding": "GSM-7",
+      "errors": [],
+      "from": {
+        "carrier": "Telnyx",
+        "line_type": "Toll-Free",
+        "phone_number": "+18005550100"
+      },
+      "id": "9b8a7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+      "messaging_profile_id": "40017f2a-1b2c-4d3e-8f4a-5b6c7d8e9f00",
+      "parts": 1,
+      "record_type": "message",
+      "sent_at": "2026-11-23T12:00:01.000+00:00",
+      "text": "(1/1) RidgeCast\nhello",
+      "to": [
+        {
+          "carrier": "T-Mobile USA",
+          "line_type": "Wireless",
+          "phone_number": "+15415550123",
+          "status": "delivered"
+        }
+      ],
+      "type": "SMS"
+    },
+    "record_type": "event"
+  },
+  "meta": {
+    "attempt": 1,
+    "delivered_to": "https://example.com/webhooks/telnyx"
+  }
+}
