@@ -1,7 +1,9 @@
 // the Telnyx provider. so far its configuration (the API key messages are sent
 // with, and the public key webhook signatures are checked against), its
-// sender, and its webhook signature check. it is added to sms_providers once it can also receive, so
-// SMS_PROVIDER can never pick a Telnyx provider that can't answer texts.
+// sender, and its webhook signature check. it is added to sms_providers once it
+// answers texts correctly: receiving them, dropping duplicate deliveries, and
+// handling STOP, HELP, and START, so SMS_PROVIDER can never pick a Telnyx
+// provider that answers a STOP with the help message or replies twice.
 // nothing here is used until then, so dead code is allowed for the whole file;
 // remove this when the provider is added
 #![allow(dead_code)]
