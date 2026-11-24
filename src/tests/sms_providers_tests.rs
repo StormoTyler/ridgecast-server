@@ -16,7 +16,7 @@ fn sms_provider_is_required() {
         let error = sms_providers::from_value(unset)
             .err()
             .expect("should be rejected");
-        assert_eq!(error, "SMS_PROVIDER must be set, to one of: local");
+        assert_eq!(error, "SMS_PROVIDER must be set, to one of: local, telnyx");
     }
 }
 
@@ -28,7 +28,7 @@ fn an_unknown_provider_is_rejected_with_the_choices() {
         .expect("should be rejected");
     assert_eq!(
         error,
-        "SMS_PROVIDER \"telnix\" is not a provider, use one of: local"
+        "SMS_PROVIDER \"telnix\" is not a provider, use one of: local, telnyx"
     );
 }
 

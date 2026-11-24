@@ -117,6 +117,15 @@ fn a_44_byte_key_of_another_algorithm_is_rejected() {
     );
 }
 
+// SMS_PROVIDER=telnyx builds the provider from its configuration. its routes
+// are tested below with the webhook
+#[test]
+fn a_provider_is_built_from_its_configuration() {
+    let public_key = base64(&public_key_bytes());
+    let config = telnyx::Config::from_values(Some(API_KEY), Some(&public_key)).unwrap();
+    let _provider = telnyx::provider(config);
+}
+
 #[test]
 fn the_api_key_is_left_out_of_debug_output() {
     let public_key = base64(&public_key_bytes());

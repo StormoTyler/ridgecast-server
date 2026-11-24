@@ -89,8 +89,8 @@ pub struct InboundMessage {
     pub to: PhoneNumber,
     pub body: String,
     // when the provider received the text. the core reads its own clock instead,
-    // since a provider's timestamp can be skewed; kept for logging and the Telnyx
-    // adapter, unused until then
+    // since a provider's timestamp can be skewed. each provider sets it, but
+    // nothing reads it yet
     #[allow(dead_code)]
     pub received_at: DateTime<Utc>,
     // opaque to the core, used only to drop duplicate webhook deliveries
@@ -107,10 +107,7 @@ pub struct SendReceipt {
 }
 
 // the core branches on the variant only, the strings are for logs,
-// so provider error codes never decide what the core does. only the tests and
-// the Telnyx sender construct the variants (local never fails), and the Telnyx
-// provider isn't added to sms_providers yet
-#[allow(dead_code)]
+// so provider error codes never decide what the core does
 #[derive(Debug, Error)]
 pub enum SendError {
     // may succeed if retried: a timeout, a 5xx response, or a rate limit.

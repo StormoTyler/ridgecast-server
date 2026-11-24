@@ -15,7 +15,7 @@ pub mod local;
 pub mod telnyx;
 
 // the values SMS_PROVIDER accepts, for the startup error
-const PROVIDERS: &str = "local";
+const PROVIDERS: &str = "local, telnyx";
 
 // a provider: how messages leave, and the routes that receive them
 pub struct Provider {
@@ -33,6 +33,7 @@ pub fn from_env() -> Result<Provider, String> {
 pub fn from_value(value: Option<&str>) -> Result<Provider, String> {
     match value.filter(|value| !value.trim().is_empty()) {
         Some("local") => Ok(local::provider()),
+        Some("telnyx") => telnyx::provider_from_env().map_err(|error| error.to_string()),
         Some(other) => Err(format!(
             "SMS_PROVIDER {other:?} is not a provider, use one of: {PROVIDERS}"
         )),

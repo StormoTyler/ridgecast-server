@@ -1,12 +1,7 @@
-// the Telnyx provider. so far its configuration (the API key messages are sent
-// with, and the public key webhook signatures are checked against), its
-// sender, its webhook signature check, and its webhook route, which leaves
-// HELP and START to Telnyx and passes STOP on as an opt-out. it is added to
-// sms_providers in its own step, so SMS_PROVIDER can never pick a Telnyx
-// provider that answers a STOP with the help message or replies twice.
-// nothing here is used until then, so dead code is allowed for the whole file;
-// remove this when the provider is added
-#![allow(dead_code)]
+// the Telnyx provider, for SMS_PROVIDER=telnyx: its configuration (the API key
+// messages are sent with, and the public key webhook signatures are checked
+// against), its sender, and its webhook route, which checks each webhook's
+// signature, leaves HELP and START to Telnyx, and passes STOP on as an opt-out
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,6 +22,7 @@ use thiserror::Error;
 // local modules
 use crate::messaging;
 use crate::sms::inbound;
+use crate::sms_providers;
 use crate::state;
 
 // the Telnyx API. TelnyxSender takes its base URL, so tests can point it at a mock
@@ -87,6 +83,21 @@ impl Config {
             api_key: api_key.to_string(),
             public_key: decode_public_key(public_key).ok_or(ConfigError::InvalidPublicKey)?,
         })
+    }
+}
+
+// the provider for SMS_PROVIDER=telnyx. a missing or invalid key stops the
+// server at startup, before MongoDB is contacted
+pub fn provider_from_env() -> Result<sms_providers::Provider, ConfigError> {
+    Ok(provider(Config::from_env()?))
+}
+
+// the provider for a configuration: messages are sent with the Telnyx API, and
+// texts come in on the webhook route
+pub fn provider(config: Config) -> sms_providers::Provider {
+    sms_providers::Provider {
+        sender: Arc::new(TelnyxSender::new(BASE_URL, config.api_key)),
+        routes: routes(config.public_key),
     }
 }
 
