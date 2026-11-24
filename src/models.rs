@@ -78,6 +78,20 @@ pub struct UserNumber {
     pub last_seen: DateTime<Utc>,
 }
 
+// an inbound message the server has handled, so a provider's repeated delivery
+// of it (such as a webhook retried after a slow answer) isn't answered twice.
+// written by database::claim_inbound and deleted database::INBOUND_MESSAGE_TTL
+// after claimed_at. holds no phone number
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct InboundMessageRecord {
+    // InboundMessage.provider_message_id
+    #[serde(rename = "_id")]
+    pub id: String,
+    // when the server first handled it, by its own clock
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub claimed_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 // data structure for parsing SMS messages from the RidgeCast
 // IOS and Android apps

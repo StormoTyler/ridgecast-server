@@ -1,5 +1,6 @@
-// tests for database::DB against a real MongoDB: its indexes, and adding, saving,
-// and deleting trackers. ignored by default, see test_db
+// tests for database::DB against a real MongoDB: its indexes, adding, saving,
+// and deleting trackers, and claiming inbound messages. ignored by default, see
+// test_db
 use std::time::Duration;
 
 use mongodb::bson::{Document, doc};
@@ -29,9 +30,11 @@ async fn indexes<T: Send + Sync>(
 }
 
 const THIRTY_DAYS: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const ONE_DAY: Duration = Duration::from_secs(24 * 60 * 60);
 
-// a tracker is deleted at expires_at, and a user's number record 30 days after
-// the number last texted, both by MongoDB, so the indexes are the retention policy
+// a tracker is deleted at expires_at, an inbound message's record a day after it
+// was handled, and a user's number record 30 days after the number last texted,
+// all by MongoDB, so the indexes are the retention policy
 #[tokio::test]
 #[ignore = "needs MongoDB"]
 async fn the_retention_indexes_exist() {
@@ -40,6 +43,10 @@ async fn the_retention_indexes_exist() {
     let points = indexes(&db.points_collection).await;
     assert!(points.contains(&(doc! { "expires_at": 1 }, Some(Duration::ZERO))));
     assert!(points.contains(&(doc! { "next_daily_forecast": 1 }, None)));
+
+    assert_eq!(database::INBOUND_MESSAGE_TTL, ONE_DAY);
+    let inbound_messages = indexes(&db.inbound_messages_collection).await;
+    assert!(inbound_messages.contains(&(doc! { "claimed_at": 1 }, Some(ONE_DAY))));
 
     assert_eq!(database::USER_NUMBER_TTL, THIRTY_DAYS);
     let user_numbers = indexes(&db.user_numbers_collection).await;
@@ -229,6 +236,43 @@ async fn stop_deletes_every_tracker_of_the_user_and_no_others() {
         .expect("the other user's tracker should be left");
     assert_eq!(tracker_count(&db).await, 1);
     assert_eq!(left.user, other.user);
+    test_db::remove(db).await;
+}
+
+// the first claim of a message id wins, and every later delivery of it is a repeat
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn an_inbound_message_is_claimed_once() {
+    let db = test_db::fresh("claim_inbound").await;
+    let now = chrono::Utc::now();
+
+    assert!(
+        database::claim_inbound("message-1", now, &db)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !database::claim_inbound("message-1", now, &db)
+            .await
+            .unwrap()
+    );
+    assert!(
+        database::claim_inbound("message-2", now, &db)
+            .await
+            .unwrap()
+    );
+
+    // the record holds only the id and when it was claimed, no phone number
+    let stored = db
+        .inbound_messages_collection
+        .clone_with_type::<Document>()
+        .find_one(doc! { "_id": "message-1" })
+        .await
+        .unwrap()
+        .unwrap();
+    let mut fields: Vec<&str> = stored.keys().map(String::as_str).collect();
+    fields.sort();
+    assert_eq!(fields, vec!["_id", "claimed_at"]);
     test_db::remove(db).await;
 }
 

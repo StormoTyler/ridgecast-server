@@ -19,13 +19,17 @@ fn numbers() -> state::Numbers {
     state::Numbers::from_values(Some(TOLL_FREE), Some(LONG_CODE)).unwrap()
 }
 
+// a new text each call, with its own provider id, so handle doesn't drop it as
+// a repeated delivery
 fn text(to: &str, body: &str) -> messaging::InboundMessage {
+    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     messaging::InboundMessage {
         from: number(USER),
         to: number(to),
         body: body.to_string(),
         received_at: chrono::Utc::now(),
-        provider_message_id: "test".to_string(),
+        provider_message_id: format!("test-{id}"),
     }
 }
 
@@ -129,12 +133,12 @@ async fn a_numbers_first_text_gets_the_opt_in_message_once() {
     tests::set_support_email();
     let db = test_db::fresh("first_text").await;
     let sender = fake_sender::FakeSender::default();
-    let message = text(LONG_CODE, INVALID_REQUEST);
+    let message = || text(LONG_CODE, INVALID_REQUEST);
 
-    let first = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
+    let first = inbound::handle(&message(), &numbers(), &number_key(), &db, &sender).await;
     assert_eq!(bodies(&first), vec![reply::opt_in_message(), parse_error()]);
 
-    let second = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
+    let second = inbound::handle(&message(), &numbers(), &number_key(), &db, &sender).await;
     assert_eq!(bodies(&second), vec![parse_error()]);
 
     for (from, to, _) in sender.attempts.lock().unwrap().iter() {
@@ -191,14 +195,14 @@ async fn an_undelivered_opt_in_message_is_sent_again() {
     let db = test_db::fresh("undelivered_opt_in").await;
     let rejected = Err(messaging::SendError::Permanent("unreachable".to_string()));
     let sender = fake_sender::FakeSender::scripted(vec![rejected]);
-    let message = text(TOLL_FREE, INVALID_REQUEST);
+    let message = || text(TOLL_FREE, INVALID_REQUEST);
 
     // a permanent failure stops the rest of the reply
-    let first = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
+    let first = inbound::handle(&message(), &numbers(), &number_key(), &db, &sender).await;
     assert_eq!(bodies(&first), vec![reply::opt_in_message()]);
     assert!(first[0].result.is_err());
 
-    let second = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
+    let second = inbound::handle(&message(), &numbers(), &number_key(), &db, &sender).await;
     assert_eq!(
         bodies(&second),
         vec![reply::opt_in_message(), parse_error()]
@@ -226,5 +230,35 @@ async fn a_dropped_text_sends_and_records_nothing() {
     assert!(deliveries.is_empty());
     assert!(sender.attempted().is_empty());
     assert!(user_numbers::needs_opt_in_message(&db, &number_key(), &number(USER)).await);
+    test_db::remove(db).await;
+}
+
+// a provider can deliver the same text again, such as a webhook retried after a
+// slow answer: it is answered once, and the repeat sends and records nothing
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn a_repeated_delivery_is_answered_once() {
+    tests::set_support_email();
+    let db = test_db::fresh("repeated_delivery").await;
+    let sender = fake_sender::FakeSender::default();
+    let message = text(TOLL_FREE, "HELP");
+
+    let first = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
+    assert_eq!(bodies(&first), vec![reply::help_message()]);
+
+    let repeat = inbound::handle(&message, &numbers(), &number_key(), &db, &sender).await;
+    assert!(repeat.is_empty());
+    assert_eq!(sender.attempted(), vec![reply::help_message()]);
+
+    // another text is still answered
+    let next = inbound::handle(
+        &text(TOLL_FREE, "HELP"),
+        &numbers(),
+        &number_key(),
+        &db,
+        &sender,
+    )
+    .await;
+    assert_eq!(bodies(&next), vec![reply::help_message()]);
     test_db::remove(db).await;
 }

@@ -69,6 +69,9 @@ pub async fn handle(
     sender: &dyn messaging::MessageSender,
 ) -> Vec<outbound::Delivery> {
     let now = Utc::now();
+    if !claim(message, db, now).await {
+        return Vec::new();
+    }
     // whether the reply is one the opt-in message goes before
     let (reply_from, responses, opt_in_applies) = match plan(message, numbers) {
         Plan::Drop => {
@@ -102,6 +105,26 @@ pub async fn handle(
         .any(|delivery| delivery.body == opt_in && delivery.result.is_ok());
     user_numbers::record_use(db, number_key, &message.from, sent_opt_in, now).await;
     deliveries
+}
+
+// whether to handle the message: false for a delivery of a message already
+// handled. a message that can't be checked is handled anyway, since a
+// duplicate reply is better than none
+async fn claim(message: &messaging::InboundMessage, db: &database::DB, now: DateTime<Utc>) -> bool {
+    let id = &message.provider_message_id;
+    match database::claim_inbound(id, now, db).await {
+        Ok(true) => true,
+        Ok(false) => {
+            tracing::warn!("inbound: dropped message {id}, already handled");
+            false
+        }
+        Err(error) => {
+            tracing::warn!(
+                "inbound: could not check message {id} for a repeat, handling it: {error}"
+            );
+            true
+        }
+    }
 }
 
 // the opt-in message goes before the reply as its own (1/1) message

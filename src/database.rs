@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use mongodb::{
     Client, Collection, IndexModel,
     bson::doc,
@@ -11,14 +12,20 @@ use thiserror::Error;
 // local modules
 use crate::messaging;
 use crate::models::{
-    AlertsSorted, AvalancheData, InvalidAlert, InvalidAvyArea, SkippedFeature, UserNumber,
-    UserPoint,
+    AlertsSorted, AvalancheData, InboundMessageRecord, InvalidAlert, InvalidAvyArea,
+    SkippedFeature, UserNumber, UserPoint,
 };
 
 // debugging records are deleted this long after an alert or zone last failed validation
 const DEBUG_RECORD_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 // a user's number record is deleted this long after the number last texted
 pub const USER_NUMBER_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+// an inbound message's record is deleted this long after it was handled
+// long TTL chosen due to unknown retry timing across SMS providers
+pub const INBOUND_MESSAGE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+// MongoDB's error code for an insert whose _id is already stored
+const DUPLICATE_KEY: i32 = 11000;
 
 #[derive(Clone, Debug)]
 pub struct DB {
@@ -26,6 +33,8 @@ pub struct DB {
     pub points_collection: Collection<UserPoint>,
     // the users' phone numbers, stored as HMACs (see sms::user_numbers)
     pub user_numbers_collection: Collection<UserNumber>,
+    // the inbound messages handled in the last INBOUND_MESSAGE_TTL, by provider id
+    pub inbound_messages_collection: Collection<InboundMessageRecord>,
     pub avy_collection: Collection<AvalancheData>,
     // alerts that failed validation, kept for debugging
     pub invalid_alerts_collection: Collection<InvalidAlert>,
@@ -79,6 +88,8 @@ impl DB {
         let alerts_collection = database.collection::<AlertsSorted>("alerts");
         let points_collection = database.collection::<UserPoint>("points");
         let user_numbers_collection = database.collection::<UserNumber>("user_numbers");
+        let inbound_messages_collection =
+            database.collection::<InboundMessageRecord>("inbound_messages");
         let avy_collection = database.collection::<AvalancheData>("avy");
         let invalid_alerts_collection = database.collection::<InvalidAlert>("invalid_alerts");
         let invalid_avy_areas_collection =
@@ -138,6 +149,20 @@ impl DB {
         user_numbers_collection
             .create_index(ttl_index(USER_NUMBER_TTL))
             .await?;
+        // an inbound message's record is deleted INBOUND_MESSAGE_TTL after it
+        // was handled, once no provider would deliver it again
+        inbound_messages_collection
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! { "claimed_at": 1 })
+                    .options(
+                        IndexOptions::builder()
+                            .expire_after(INBOUND_MESSAGE_TTL)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await?;
         // trackers are deleted at expires_at. nothing checks an expired tracker:
         // the last check before expiry sends the tracker's final message
         points_collection
@@ -155,6 +180,7 @@ impl DB {
             alerts_collection,
             points_collection,
             user_numbers_collection,
+            inbound_messages_collection,
             avy_collection,
             invalid_alerts_collection,
             invalid_avy_areas_collection,
@@ -233,4 +259,28 @@ pub async fn delete_user_trackers(user: &messaging::PhoneNumber, db: &DB) -> Res
         .delete_many(doc! { "user": bson::to_bson(user)? })
         .await?;
     Ok(result.deleted_count)
+}
+
+// records that an inbound message is being handled, by the provider's id for
+// it. returns false when it was already recorded: the provider delivered the
+// same message again, and it must not be answered twice. _id is unique, so two
+// deliveries arriving together can't both claim it
+pub async fn claim_inbound(provider_message_id: &str, now: DateTime<Utc>, db: &DB) -> Result<bool> {
+    let record = InboundMessageRecord {
+        id: provider_message_id.to_string(),
+        claimed_at: now,
+    };
+    match db.inbound_messages_collection.insert_one(record).await {
+        Ok(_) => Ok(true),
+        Err(error) if is_duplicate_key(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn is_duplicate_key(error: &mongodb::error::Error) -> bool {
+    matches!(
+        error.kind.as_ref(),
+        mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(write_error))
+            if write_error.code == DUPLICATE_KEY
+    )
 }
