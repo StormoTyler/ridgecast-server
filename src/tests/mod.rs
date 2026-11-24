@@ -13,6 +13,7 @@ mod sms_reply_tests;
 mod sms_tests;
 mod snapshots_tests;
 mod state_tests;
+mod telnyx_tests;
 mod test_db;
 mod tracker_checks_tests;
 mod tracking_tests;

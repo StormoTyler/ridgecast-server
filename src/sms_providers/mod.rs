@@ -12,6 +12,7 @@ use crate::messaging;
 use crate::state;
 
 pub mod local;
+pub mod telnyx;
 
 // the values SMS_PROVIDER accepts, for the startup error
 const PROVIDERS: &str = "local";

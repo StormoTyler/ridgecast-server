@@ -25,6 +25,10 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 # sms::user_numbers stores an HMAC-SHA256 of each number rather than the number
 hmac = "0.12"
 sha2 = "0.10"
+# the Telnyx provider checks webhook signatures against its Ed25519 public key,
+# which the portal gives in base64
+ed25519-dalek = "2"
+base64 = "0.22"
 
 
 [dev-dependencies]
