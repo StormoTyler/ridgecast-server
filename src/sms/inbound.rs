@@ -99,6 +99,14 @@ pub async fn handle(
         opt_in_applies && user_numbers::needs_opt_in_message(db, number_key, &message.from).await;
     let responses = with_opt_in_message(needs_opt_in, responses);
     let deliveries = outbound::send_responses(sender, &reply_from, &message.from, &responses).await;
+    // the user replied STOP before this text, so a tracker this request created,
+    // and any other, would only be refused at every check until it expired
+    let opted_out = deliveries
+        .iter()
+        .any(|delivery| matches!(delivery.result, Err(messaging::SendError::OptedOut)));
+    if opted_out {
+        delete_trackers(&message.from, db).await;
+    }
     let opt_in = reply::opt_in_message();
     let sent_opt_in = deliveries
         .iter()
@@ -124,6 +132,16 @@ async fn claim(message: &messaging::InboundMessage, db: &database::DB, now: Date
             );
             true
         }
+    }
+}
+
+// deletes every tracker of a user who opted out: by replying STOP
+pub async fn delete_trackers(user: &messaging::PhoneNumber, db: &database::DB) {
+    match database::delete_user_trackers(user, db).await {
+        Ok(deleted) => tracing::info!("inbound: user opted out, deleted {deleted} trackers"),
+        Err(error) => tracing::error!(
+            "inbound: user opted out, but their trackers could not be deleted: {error}"
+        ),
     }
 }
 

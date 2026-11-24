@@ -1,8 +1,8 @@
 // the Telnyx provider. so far its configuration (the API key messages are sent
 // with, and the public key webhook signatures are checked against), its
-// sender, its webhook signature check, and its webhook route. it is added to
-// sms_providers once it answers texts correctly: dropping duplicate deliveries,
-// and handling STOP, HELP, and START, so SMS_PROVIDER can never pick a Telnyx
+// sender, its webhook signature check, and its webhook route, which leaves
+// HELP and START to Telnyx and passes STOP on as an opt-out. it is added to
+// sms_providers in its own step, so SMS_PROVIDER can never pick a Telnyx
 // provider that answers a STOP with the help message or replies twice.
 // nothing here is used until then, so dead code is allowed for the whole file;
 // remove this when the provider is added
@@ -374,6 +374,14 @@ fn webhook(
             tracing::warn!("telnyx: inbound text dropped: {reason}");
             StatusCode::OK
         }
+        Webhook::AutoAnswered(keyword) => {
+            tracing::debug!("telnyx: {keyword} was answered by Telnyx, not passed on");
+            StatusCode::OK
+        }
+        Webhook::OptOut(user) => {
+            tokio::spawn(async move { inbound::delete_trackers(&user, &state.db).await });
+            StatusCode::OK
+        }
         Webhook::Inbound(message) => {
             tokio::spawn(async move {
                 // inbound::handle results in either a message being dropped
@@ -404,6 +412,13 @@ pub enum Webhook {
     // an inbound text, or a body, that can't be answered: a sender that isn't
     // a phone number, a group text, or a payload that can't be read
     Dropped(&'static str),
+    // HELP or START, which Telnyx has already answered from the messaging
+    // profile's settings, so the core isn't given it: it would reply a second
+    // time. by the keyword
+    AutoAnswered(&'static str),
+    // STOP, which Telnyx has already answered and now blocks every message to
+    // the user: the core deletes their trackers and sends nothing
+    OptOut(messaging::PhoneNumber),
     Inbound(messaging::InboundMessage),
 }
 
@@ -433,6 +448,10 @@ struct InboundPayload {
     // null for a picture with no text
     text: Option<String>,
     received_at: Option<String>,
+    // set when the text was one of the messaging profile's keywords, which
+    // Telnyx answers itself: "STOP", "START", or "HELP". Telnyx's docs give
+    // only these values, and not what a normal text carries (null or no field)
+    autoresponse_type: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -475,6 +494,22 @@ pub fn read_webhook(
     let Ok(from) = messaging::PhoneNumber::new(payload.from.phone_number) else {
         return Webhook::Dropped("the sender is not an E.164 number");
     };
+    // before the number texted is checked: Telnyx's opt-outs cover every
+    // number on the messaging profile, so a STOP to any of them counts
+    match payload
+        .autoresponse_type
+        .as_deref()
+        .map(str::to_ascii_uppercase)
+        .as_deref()
+    {
+        Some("STOP") => return Webhook::OptOut(from),
+        Some("HELP") => return Webhook::AutoAnswered("HELP"),
+        Some("START") => return Webhook::AutoAnswered("START"),
+        // a type Telnyx's docs don't give: answered as a normal text, since a
+        // second reply is better than none
+        Some(other) => tracing::warn!("telnyx: unknown autoresponse_type {other:?}, passed on"),
+        None => {}
+    }
     // whether it was sent to one of the server's numbers is the core's decision
     let [to] = payload.to.as_slice() else {
         return Webhook::Dropped("not sent to exactly one number, such as a group text");

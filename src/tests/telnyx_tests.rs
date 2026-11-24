@@ -6,12 +6,15 @@ use base64::Engine;
 use wiremock::matchers::{bearer_token, body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use mongodb::bson::{self, doc};
+
+use crate::database;
 use crate::messaging;
 use crate::sms::{reply, user_numbers};
 use crate::sms_providers::telnyx;
 use crate::state;
 use crate::tests;
-use crate::tests::{fake_sender, test_db};
+use crate::tests::{fake_sender, models_tests, test_db};
 
 const API_KEY: &str = "KEY0123456789ABCDEF";
 
@@ -542,10 +545,11 @@ fn an_inbound_text_is_read() {
     assert_eq!(message.provider_message_id, MESSAGE_ID);
 }
 
-// nothing is parsed before the signature is checked
+// nothing is parsed before the signature is checked: a body that can't be
+// parsed is rejected, not dropped as unreadable
 #[test]
 fn a_webhook_with_a_bad_signature_is_rejected() {
-    let body = MESSAGE_RECEIVED.as_bytes();
+    let body = b"not json";
     let mut headers = signed_headers(body, webhook_now());
     headers.insert(
         "telnyx-signature-ed25519",
@@ -653,21 +657,15 @@ fn received_at_falls_back_to_the_event_time_then_the_clock() {
     assert_eq!(read_text(&missing_both).received_at, webhook_now());
 }
 
-// the route end to end: a signed text is answered 200 and handled in the
-// background, and an unsigned one is 401 and never handled. the text isn't a
-// request, so the reply is the help message and nothing calls NWS
-#[tokio::test]
-#[ignore = "needs MongoDB"]
-async fn the_route_answers_and_then_handles_a_text() {
-    tests::set_support_email();
-    let db = test_db::fresh("telnyx_route").await;
-    let sender = std::sync::Arc::new(fake_sender::FakeSender::default());
+// serves the webhook route on a local port, with FROM as the server's number,
+// and returns its URL
+async fn serve_route(db: &database::DB, sender: std::sync::Arc<fake_sender::FakeSender>) -> String {
     let state = state::AppState {
         db: db.clone(),
         numbers: state::Numbers::from_values(Some(FROM), None).unwrap(),
         number_key: user_numbers::NumberKey::from_value(Some("0123456789abcdef0123456789abcdef"))
             .unwrap(),
-        sender: sender.clone(),
+        sender,
     };
     let app = telnyx::routes(signing_key().verifying_key()).with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -677,24 +675,50 @@ async fn the_route_answers_and_then_handles_a_text() {
         telnyx::WEBHOOK_PATH
     );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    url
+}
 
-    let body = edited(MESSAGE_RECEIVED, |webhook| {
-        payload(webhook)["text"] = serde_json::json!("hello");
-    });
-    let client = reqwest::Client::new();
-
-    let unsigned = client.post(&url).body(body.clone()).send().await.unwrap();
-    assert_eq!(unsigned.status(), reqwest::StatusCode::UNAUTHORIZED);
-
-    // signed now, since the route reads the real clock
-    let signed = client
-        .post(&url)
+// posts a body signed now, since the route reads the real clock
+async fn post_signed(url: &str, body: Vec<u8>) -> reqwest::StatusCode {
+    reqwest::Client::new()
+        .post(url)
         .headers(signed_headers(&body, chrono::Utc::now()))
         .body(body)
         .send()
         .await
+        .unwrap()
+        .status()
+}
+
+// the route end to end: a signed text is answered 200 and handled in the
+// background, and an unsigned one is 401 and never handled. the text isn't a
+// request, so the reply is the help message and nothing calls NWS
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn the_route_answers_and_then_handles_a_text() {
+    tests::set_support_email();
+    let db = test_db::fresh("telnyx_route").await;
+    let sender = std::sync::Arc::new(fake_sender::FakeSender::default());
+    let url = serve_route(&db, sender.clone()).await;
+
+    let body = edited(MESSAGE_RECEIVED, |webhook| {
+        payload(webhook)["text"] = serde_json::json!("hello");
+    });
+    let unsigned = reqwest::Client::new()
+        .post(&url)
+        .body(body)
+        .send()
+        .await
         .unwrap();
-    assert_eq!(signed.status(), reqwest::StatusCode::OK);
+    assert_eq!(unsigned.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    // another message id, so if the unsigned text had been handled, the repeat
+    // check couldn't drop this one, and a second reply would be sent
+    let signed = edited(MESSAGE_RECEIVED, |webhook| {
+        payload(webhook)["text"] = serde_json::json!("hello");
+        payload(webhook)["id"] = serde_json::json!("another-message-id");
+    });
+    assert_eq!(post_signed(&url, signed).await, reqwest::StatusCode::OK);
 
     // the reply is sent after the answer, so wait for it
     for _ in 0..50 {
@@ -703,9 +727,104 @@ async fn the_route_answers_and_then_handles_a_text() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+    // a reply to the unsigned text would also come in the background, so give
+    // one time to arrive
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert_eq!(sender.attempted(), vec![reply::help_message()]);
     let attempts = sender.attempts.lock().unwrap().clone();
     assert_eq!(attempts[0].0, messaging::PhoneNumber::new(FROM).unwrap());
     assert_eq!(attempts[0].1, messaging::PhoneNumber::new(TO).unwrap());
+    test_db::remove(db).await;
+}
+
+fn with_autoresponse(autoresponse_type: &str) -> Vec<u8> {
+    edited(MESSAGE_RECEIVED, |webhook| {
+        payload(webhook)["autoresponse_type"] = serde_json::json!(autoresponse_type);
+    })
+}
+
+// a STOP is read as an opt-out by the user who sent it, not passed on as a
+// text: Telnyx has answered it and blocks the user, so the route only deletes
+// their trackers
+#[test]
+fn stop_is_an_opt_out_by_the_sender() {
+    match read(&with_autoresponse("STOP")) {
+        telnyx::Webhook::OptOut(user) => {
+            assert_eq!(user, messaging::PhoneNumber::new(TO).unwrap())
+        }
+        other => panic!("should be an opt-out, was {other:?}"),
+    }
+}
+
+// Telnyx's opt-outs cover every number on the messaging profile, so the
+// number texted doesn't matter
+#[test]
+fn stop_is_an_opt_out_whatever_number_was_texted() {
+    let body = edited(MESSAGE_RECEIVED, |webhook| {
+        payload(webhook)["autoresponse_type"] = serde_json::json!("STOP");
+        payload(webhook)["to"] = serde_json::json!([]);
+    });
+    assert!(matches!(read(&body), telnyx::Webhook::OptOut(_)));
+}
+
+// Telnyx has answered HELP and START itself, so the core would reply twice
+#[test]
+fn help_and_start_are_left_to_telnyx() {
+    for (autoresponse_type, keyword) in [("HELP", "HELP"), ("START", "START"), ("help", "HELP")] {
+        let webhook = read(&with_autoresponse(autoresponse_type));
+        assert!(
+            matches!(webhook, telnyx::Webhook::AutoAnswered(answered) if answered == keyword),
+            "{autoresponse_type} should be left to Telnyx, was {webhook:?}"
+        );
+    }
+}
+
+// a type Telnyx's docs don't give is answered as a normal text, since a second
+// reply is better than none
+#[test]
+fn an_unknown_autoresponse_type_is_passed_on() {
+    let message = read_text(&with_autoresponse("SOMETHING_NEW"));
+    assert_eq!(message.body, "RC1 45.3735 -121.6959 0000 0 2");
+}
+
+// the route end to end for a STOP: answered 200, then every tracker of the user
+// who sent it is deleted in the background, another user's is kept, and
+// nothing is sent, since Telnyx has answered the STOP itself
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn the_route_deletes_the_trackers_of_a_user_who_replied_stop() {
+    let db = test_db::fresh("telnyx_route_stop").await;
+    let sender = std::sync::Arc::new(fake_sender::FakeSender::default());
+    let url = serve_route(&db, sender.clone()).await;
+    let user = messaging::PhoneNumber::new(TO).unwrap();
+    let other = messaging::PhoneNumber::new("+15415550199").unwrap();
+    for number in [&user, &user, &other] {
+        let mut tracker = models_tests::tracker();
+        tracker.user = number.clone();
+        database::add_tracker(&tracker, &db).await.unwrap();
+    }
+    let trackers_of = |number: &messaging::PhoneNumber| {
+        let filter = doc! { "user": bson::to_bson(number).unwrap() };
+        let collection = db.points_collection.clone();
+        async move { collection.count_documents(filter).await.unwrap() }
+    };
+
+    assert_eq!(
+        post_signed(&url, with_autoresponse("STOP")).await,
+        reqwest::StatusCode::OK
+    );
+
+    // the trackers are deleted after the answer, so wait for it
+    for _ in 0..50 {
+        if trackers_of(&user).await == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(trackers_of(&user).await, 0);
+    assert_eq!(trackers_of(&other).await, 1);
+    // a reply would be sent in the background too, so give one time to arrive
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(sender.attempted().is_empty());
     test_db::remove(db).await;
 }

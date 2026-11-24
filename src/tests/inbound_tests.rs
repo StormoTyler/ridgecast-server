@@ -5,7 +5,7 @@ use crate::messaging;
 use crate::sms::{inbound, reply, request, user_numbers};
 use crate::state;
 use crate::tests;
-use crate::tests::{fake_sender, test_db};
+use crate::tests::{fake_sender, models_tests, test_db};
 
 const USER: &str = "+15415550123";
 const TOLL_FREE: &str = "+18005550100";
@@ -260,5 +260,86 @@ async fn a_repeated_delivery_is_answered_once() {
     )
     .await;
     assert_eq!(bodies(&next), vec![reply::help_message()]);
+    test_db::remove(db).await;
+}
+
+async fn add_trackers(users: &[&str], db: &crate::database::DB) {
+    for user in users {
+        let mut tracker = models_tests::tracker();
+        tracker.user = number(user);
+        crate::database::add_tracker(&tracker, db).await.unwrap();
+    }
+}
+
+async fn trackers_of(user: &str, db: &crate::database::DB) -> u64 {
+    db.points_collection
+        .count_documents(mongodb::bson::doc! { "user": user })
+        .await
+        .unwrap()
+}
+
+const OTHER_USER: &str = "+15415550199";
+
+// a STOP the provider reported deletes every tracker of the user and no one
+// else's, and sends nothing
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn an_opt_out_deletes_the_users_trackers() {
+    let db = test_db::fresh("delete_trackers").await;
+    add_trackers(&[USER, USER, OTHER_USER], &db).await;
+
+    inbound::delete_trackers(&number(USER), &db).await;
+
+    assert_eq!(trackers_of(USER, &db).await, 0);
+    assert_eq!(trackers_of(OTHER_USER, &db).await, 1);
+    test_db::remove(db).await;
+}
+
+// a reply the provider refuses because the user replied STOP earlier deletes
+// their trackers, so a tracker their request created doesn't wait for its
+// first check to be deleted
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn a_reply_refused_as_opted_out_deletes_the_users_trackers() {
+    tests::set_support_email();
+    let db = test_db::fresh("reply_opted_out").await;
+    add_trackers(&[USER, OTHER_USER], &db).await;
+    let sender = fake_sender::FakeSender::scripted(vec![Err(messaging::SendError::OptedOut)]);
+
+    inbound::handle(
+        &text(TOLL_FREE, "HELP"),
+        &numbers(),
+        &number_key(),
+        &db,
+        &sender,
+    )
+    .await;
+
+    assert_eq!(trackers_of(USER, &db).await, 0);
+    assert_eq!(trackers_of(OTHER_USER, &db).await, 1);
+    test_db::remove(db).await;
+}
+
+// a permanent failure may be the server's, such as an unverified number, so it
+// deletes nothing
+#[tokio::test]
+#[ignore = "needs MongoDB"]
+async fn a_reply_refused_for_another_reason_keeps_the_trackers() {
+    tests::set_support_email();
+    let db = test_db::fresh("reply_permanent").await;
+    add_trackers(&[USER], &db).await;
+    let rejected = Err(messaging::SendError::Permanent("unreachable".to_string()));
+    let sender = fake_sender::FakeSender::scripted(vec![rejected]);
+
+    inbound::handle(
+        &text(TOLL_FREE, "HELP"),
+        &numbers(),
+        &number_key(),
+        &db,
+        &sender,
+    )
+    .await;
+
+    assert_eq!(trackers_of(USER, &db).await, 1);
     test_db::remove(db).await;
 }
