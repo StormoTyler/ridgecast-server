@@ -34,6 +34,8 @@ base64 = "0.22"
 [dev-dependencies]
 # pausing time in tests, so the send retry delays run instantly
 tokio = { version = "1.52.3", features = ["test-util"] }
+# a local HTTP server per test, standing in for an SMS provider's API
+wiremock = "0.6"
 
 [profile.release]
 lto = "thin"

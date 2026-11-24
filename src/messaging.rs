@@ -107,8 +107,9 @@ pub struct SendReceipt {
 }
 
 // the core branches on the variant only, the strings are for logs,
-// so provider error codes never decide what the core does. only the tests
-// construct the variants until an adapter that can fail exists (local never fails)
+// so provider error codes never decide what the core does. only the tests and
+// the Telnyx sender construct the variants (local never fails), and the Telnyx
+// provider isn't added to sms_providers yet
 #[allow(dead_code)]
 #[derive(Debug, Error)]
 pub enum SendError {
