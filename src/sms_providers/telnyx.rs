@@ -1,6 +1,6 @@
 // the Telnyx provider. so far its configuration (the API key messages are sent
-// with, and the public key webhook signatures are checked against) and its
-// sender. it is added to sms_providers once it can also receive, so
+// with, and the public key webhook signatures are checked against), its
+// sender, and its webhook signature check. it is added to sms_providers once it can also receive, so
 // SMS_PROVIDER can never pick a Telnyx provider that can't answer texts.
 // nothing here is used until then, so dead code is allowed for the whole file;
 // remove this when the provider is added
@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use base64::Engine;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -93,6 +94,75 @@ fn decode_public_key(value: &str) -> Option<ed25519_dalek::VerifyingKey> {
 // the trimmed value, None for an unset or empty variable
 fn set_value(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+// ---- webhook signatures ----
+
+// how far a webhook's timestamp may be from the server's clock, either way, so a
+// captured webhook can't be replayed later
+pub const MAX_TIMESTAMP_SKEW_SECONDS: i64 = 5 * 60;
+
+// why a webhook was rejected. none of them holds the body, which can name a number
+#[derive(Debug, Error, PartialEq)]
+pub enum SignatureError {
+    #[error("missing the telnyx-signature-ed25519 or telnyx-timestamp header")]
+    MissingHeader,
+    #[error("the signature is not a base64 Ed25519 signature")]
+    MalformedSignature,
+    #[error("the signature does not match")]
+    BadSignature,
+    // signed by Telnyx, so the timestamp is the one Telnyx sent
+    #[error("telnyx-timestamp is not a Unix timestamp")]
+    InvalidTimestamp,
+    // signed by Telnyx, but sent too long ago: seconds before the server's
+    // clock, negative for a timestamp ahead of it
+    #[error(
+        "the webhook is {age_seconds} s from the server's clock, over the {MAX_TIMESTAMP_SKEW_SECONDS} s limit"
+    )]
+    StaleTimestamp { age_seconds: i64 },
+}
+
+// checks a webhook's telnyx-signature-ed25519 header (base64) against the public
+// key: Telnyx signs "{telnyx-timestamp}|{raw body}". the signature is checked
+// before the timestamp's age, so a StaleTimestamp is always a real Telnyx webhook
+// that arrived late, and its age is worth logging. body must be the bytes as
+// received, before any parsing
+pub fn verify_signature(
+    public_key: &ed25519_dalek::VerifyingKey,
+    timestamp: Option<&str>,
+    signature: Option<&str>,
+    body: &[u8],
+    now: DateTime<Utc>,
+) -> Result<(), SignatureError> {
+    let (Some(timestamp), Some(signature)) = (timestamp, signature) else {
+        return Err(SignatureError::MissingHeader);
+    };
+    let signature = base64::engine::general_purpose::STANDARD
+        .decode(signature.trim())
+        .ok()
+        .and_then(|bytes| ed25519_dalek::Signature::from_slice(&bytes).ok())
+        .ok_or(SignatureError::MalformedSignature)?;
+
+    // the header exactly as received, since those are the bytes Telnyx signed
+    let mut signed = Vec::with_capacity(timestamp.len() + 1 + body.len());
+    signed.extend_from_slice(timestamp.as_bytes());
+    signed.push(b'|');
+    signed.extend_from_slice(body);
+    // strict rejects weak keys and malleable signatures, which Telnyx never sends
+    public_key
+        .verify_strict(&signed, &signature)
+        .map_err(|_| SignatureError::BadSignature)?;
+
+    let sent: i64 = timestamp
+        .trim()
+        .parse()
+        .map_err(|_| SignatureError::InvalidTimestamp)?;
+    // saturating, so a timestamp far from now can't overflow
+    let age_seconds = now.timestamp().saturating_sub(sent);
+    if age_seconds.unsigned_abs() > MAX_TIMESTAMP_SKEW_SECONDS.unsigned_abs() {
+        return Err(SignatureError::StaleTimestamp { age_seconds });
+    }
+    Ok(())
 }
 
 // sends messages with the Telnyx API, one attempt per message: the core
