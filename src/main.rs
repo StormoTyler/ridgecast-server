@@ -56,6 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let number_key = user_numbers::NumberKey::from_env().map_err(|e| e.to_string())?;
     reply::set_support_email(std::env::var("SUPPORT_EMAIL").ok().as_deref())?;
     let provider = sms_providers::from_env()?;
+    let addr = state::listen_address_from_env().map_err(|e| e.to_string())?;
 
     // a string, so a refused unencrypted connection prints its message rather than the variant
     let db = database::DB::init().await.map_err(|e| e.to_string())?;
@@ -63,7 +64,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // bound before anything is spawned, so a server that can't listen, such as when
     // another one already holds the port, exits without starting refreshes that it
     // would cancel, which would print misleading refresh failures
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 5001));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| format!("could not listen on {addr}: {e}"))?;

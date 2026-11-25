@@ -58,7 +58,7 @@ Then:
 
 ```bash
 cp .env.example .env    # then set RIDGECAST_USER_AGENT to your app name and contact
-cargo run               # serves on 127.0.0.1:5001
+cargo run               # serves on 127.0.0.1:5001, change it with HOST and PORT
 ```
 
 See `.env.example` for each variable. The server stops at startup if one is

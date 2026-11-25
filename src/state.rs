@@ -3,6 +3,7 @@
 // API keys) are not here: src/sms_providers builds those, so nothing in the
 // server's state names an SMS provider
 
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use axum::extract::FromRef;
@@ -52,6 +53,45 @@ pub enum ConfigError {
     InvalidNumber(&'static str),
     #[error("SMS_NUMBER and SMS_INTERNATIONAL_NUMBER must be different numbers")]
     SameNumbers,
+    #[error("HOST must be an IP address, such as 127.0.0.1 or 0.0.0.0")]
+    InvalidHost,
+    #[error("PORT must be a port number, from 1 to 65535")]
+    InvalidPort,
+}
+
+// where the server listens when HOST and PORT aren't set: only this machine,
+// so running it locally never puts the local provider's dev route, which
+// trusts any number, on the network. a container sets HOST=0.0.0.0, and a host
+// that assigns the port sets PORT
+pub const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+pub const DEFAULT_PORT: u16 = 5001;
+
+pub fn listen_address_from_env() -> Result<SocketAddr, ConfigError> {
+    listen_address(
+        std::env::var("HOST").ok().as_deref(),
+        std::env::var("PORT").ok().as_deref(),
+    )
+}
+
+// the values of HOST and PORT, None when unset. an empty value counts as
+// unset. HOST is an IP address, not a name, so it never depends on name
+// lookup. port 0, which lets the system pick one, is refused, since nothing
+// could be pointed at it
+pub fn listen_address(host: Option<&str>, port: Option<&str>) -> Result<SocketAddr, ConfigError> {
+    let host = match set_value(host) {
+        Some(host) => host.trim().parse().map_err(|_| ConfigError::InvalidHost)?,
+        None => DEFAULT_HOST,
+    };
+    let port = match set_value(port) {
+        Some(port) => port
+            .trim()
+            .parse()
+            .ok()
+            .filter(|port| *port != 0)
+            .ok_or(ConfigError::InvalidPort)?,
+        None => DEFAULT_PORT,
+    };
+    Ok(SocketAddr::new(host, port))
 }
 
 impl Numbers {
