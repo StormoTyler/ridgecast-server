@@ -234,7 +234,7 @@ async fn a_dropped_text_sends_and_records_nothing() {
 }
 
 // a provider can deliver the same text again, such as a webhook retried after a
-// slow answer: it is answered once, and the repeat sends and records nothing
+// slow answer: it is answered once, and the repeat sends nothing
 #[tokio::test]
 #[ignore = "needs MongoDB"]
 async fn a_repeated_delivery_is_answered_once() {
@@ -281,7 +281,7 @@ async fn trackers_of(user: &str, db: &crate::database::DB) -> u64 {
 const OTHER_USER: &str = "+15415550199";
 
 // a STOP the provider reported deletes every tracker of the user and no one
-// else's, and sends nothing
+// else's
 #[tokio::test]
 #[ignore = "needs MongoDB"]
 async fn an_opt_out_deletes_the_users_trackers() {
@@ -296,8 +296,8 @@ async fn an_opt_out_deletes_the_users_trackers() {
 }
 
 // a reply the provider refuses because the user replied STOP earlier deletes
-// their trackers, so a tracker their request created doesn't wait for its
-// first check to be deleted
+// all their trackers, including one their request just created, which would
+// otherwise wait for its first check to be deleted
 #[tokio::test]
 #[ignore = "needs MongoDB"]
 async fn a_reply_refused_as_opted_out_deletes_the_users_trackers() {

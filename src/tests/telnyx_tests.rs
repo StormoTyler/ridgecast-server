@@ -550,7 +550,8 @@ fn an_inbound_text_is_read() {
         message.received_at,
         webhook_now() - chrono::Duration::seconds(1)
     );
-    // the same in every delivery of the webhook, so duplicates can be dropped
+    // the message id, not the event id: repeated deliveries share it, so the
+    // core can drop them
     assert_eq!(message.provider_message_id, MESSAGE_ID);
 }
 
@@ -634,7 +635,8 @@ fn a_text_not_sent_to_exactly_one_number_is_dropped() {
     }
 }
 
-// messages with bodies that aren't text are rejected
+// a text with no text, such as a picture, is passed on with an empty body, which
+// the core answers like any text that isn't a request
 #[test]
 fn a_text_with_no_text_has_an_empty_body() {
     let body = edited(MESSAGE_RECEIVED, |webhook| {
@@ -776,7 +778,8 @@ fn stop_is_an_opt_out_whatever_number_was_texted() {
     assert!(matches!(read(&body), telnyx::Webhook::OptOut(_)));
 }
 
-// Telnyx has answered HELP and START itself, so the core would reply twice
+// Telnyx has answered HELP and START itself, so they aren't passed on: the
+// core would send a second reply
 #[test]
 fn help_and_start_are_left_to_telnyx() {
     for (autoresponse_type, keyword) in [("HELP", "HELP"), ("START", "START"), ("help", "HELP")] {
