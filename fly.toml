@@ -1,0 +1,52 @@
+# Fly.io deploy config for RidgeCast. setup steps are in the README under
+# Hosting, "Example: Fly.io". the server's settings that differ per deployment, or are
+# secret, are set with `fly secrets set`, never here: this file is public
+
+# Fly app names are unique across Fly, so a deployment of your own needs its own
+app = "ridgecast"
+# Ashburn, Virginia. put the MongoDB Atlas cluster in the same area (AWS us-east-1)
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # HOST is 0.0.0.0 in the Dockerfile, and PORT is left at its default, 5001
+  SMS_PROVIDER = "telnyx"
+  RIDGECAST_DB = "ridgecast"
+
+# exactly one machine, always running. every running server checks the trackers
+# on the hour, so a second machine would send every tracker message twice, and a
+# stopped one would miss the hourly checks. Fly's first deploy starts two
+# machines unless told not to: deploy with `fly deploy --ha=false`
+[http_service]
+  internal_port = 5001
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+
+# the old machine is replaced, never run alongside the new one, which would also
+# check the trackers twice. "bluegreen" and "canary" both overlap them
+[deploy]
+  strategy = "immediate"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  # each request reads its own copy of the alerts snapshot, so leave room above 256MB
+  memory = "512mb"
+
+# /health is checked for monitoring only. it isn't an [[http_service.checks]],
+# since Fly stops sending traffic to a machine failing one of those: a stale
+# snapshot (NWS or NAC down) would then cut off Telnyx's webhooks, and texts
+# would go unanswered though the server could still reply. Fly never restarts a
+# machine for a failing check either way
+[checks]
+  [checks.health]
+    type = "http"
+    port = 5001
+    path = "/health"
+    method = "GET"
+    interval = "1m"
+    timeout = "10s"
+    grace_period = "1m"

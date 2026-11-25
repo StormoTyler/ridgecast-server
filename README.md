@@ -115,6 +115,72 @@ A `STOP` deletes all of the user's trackers. Telnyx's opt-outs cover every
 number on the messaging profile, so a user who replies `STOP` to one number is
 opted out of all of them until they reply `START`.
 
+## Hosting
+
+The repository includes a `Dockerfile`, which builds an image any container
+host can run. The environment variables in `.env.example` come from the host
+when the container starts; the image never contains them. Whatever the host,
+the server needs:
+
+- **Exactly one instance, always running.** Every running server checks the
+  trackers on the hour, so two instances would send every tracker message
+  twice, and a stopped one misses the checks. Turn off autoscaling and
+  scale-to-zero, and use a deploy that stops the old instance before starting
+  the new one (no blue-green or canary deploys, which run both for a while).
+- **To listen on every interface.** The image sets `HOST=0.0.0.0`, and the
+  server listens on `PORT`, 5001 by default.
+- **A MongoDB it reaches over TLS.** The server refuses an unencrypted
+  connection to a database on another machine. MongoDB Atlas connection
+  strings use TLS; the free M0 tier's limits aren't meant for production.
+- **A health check that doesn't take it out of service.** `/health` returns
+  503 when a snapshot is stale, such as while NWS is down, and the server can
+  still answer texts then. Use it for monitoring, never as a check that stops
+  traffic to the server or restarts it: with one instance, that would cut off
+  the SMS provider's webhooks.
+- **HTTPS from the internet** for the SMS provider's webhooks (see Sending
+  texts with Telnyx).
+- **Logs kept only as long as your privacy policy allows.** The server writes
+  its log to stderr, and the log includes the coordinates users request.
+  RidgeCast's own policy keeps them 30 days.
+
+Under plain `docker run`, add `--init`: the server doesn't handle signals, so
+as the container's first process it would ignore `docker stop`'s SIGTERM until
+Docker kills it 10 seconds later.
+
+### Example: Fly.io
+
+RidgeCast itself runs on Fly.io, with the config in `fly.toml`. It runs one
+machine that never stops, deploys by replacing it, and checks `/health` for
+monitoring only. To use it:
+
+1. Create the MongoDB cluster in the same area as `primary_region` in
+   `fly.toml`. Atlas only accepts connections from addresses on its IP access
+   list, and a Fly machine's outbound address isn't fixed by default: either
+   give the app a static egress address (see Fly's docs) or allow `0.0.0.0/0`
+   and rely on the database user's password and TLS.
+2. Install `flyctl`, run `fly auth login`, set `app` in `fly.toml` to a name of
+   your own, and create the app with `fly apps create <name>`.
+3. Set the server's settings as secrets. They're the variables in
+   `.env.example`, except `SMS_PROVIDER` and `RIDGECAST_DB`, which `fly.toml`
+   sets:
+
+   ```bash
+   fly secrets set DATABASE_URL='mongodb+srv://…' \
+     USER_NUMBERS_KEY="$(openssl rand -hex 32)" \
+     RIDGECAST_USER_AGENT='(RidgeCast, you@example.com)' \
+     SMS_NUMBER='+1…' SUPPORT_EMAIL='you@example.com' \
+     TELNYX_API_KEY='…' TELNYX_PUBLIC_KEY='…'
+   ```
+
+   Keep `USER_NUMBERS_KEY` once it's set: changing it sends every user the
+   opt-in message again.
+4. Deploy with `fly deploy --ha=false`. Fly's first deploy otherwise starts
+   two machines. `fly scale count` should show one.
+5. Set the Telnyx messaging profile's webhook URL to
+   `https://<app>.fly.dev/webhooks/telnyx`.
+
+`fly logs` shows the server's log, which Fly keeps for 7 days.
+
 ## Development
 
 ```bash
