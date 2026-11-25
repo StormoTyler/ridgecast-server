@@ -12,7 +12,8 @@ forecasts, and daily forecasts.
 
 > **Status: in development.** Answering requests and the hourly tracker checks
 > work end to end with the `local` SMS provider, which prints messages instead
-> of texting them. SMS provider adapters aren't implemented yet.
+> of texting them. A [Telnyx](https://telnyx.com) adapter is included for
+> sending real texts, but hasn't been tested against Telnyx yet.
 
 ## How it works
 
@@ -84,6 +85,36 @@ are current, for uptime monitors.
 > **The `local` provider is for development only.** Its `/dev/sms` route trusts
 > any `from` number, so never run it against a database that serves real users.
 
+## Sending texts with Telnyx
+
+The repository includes a Telnyx adapter (`src/sms_providers/telnyx.rs`). To
+use it:
+
+1. In the Telnyx portal, set up a number on a messaging profile, and copy an
+   API key and the public key (Keys & Credentials > Public Key). A toll-free
+   number must pass toll-free verification before it can send.
+2. Set `SMS_PROVIDER=telnyx`, `TELNYX_API_KEY`, `TELNYX_PUBLIC_KEY`, and
+   `SMS_NUMBER` (the Telnyx number). The server stops at startup if a key is
+   missing or invalid.
+3. Set the messaging profile's webhook URL to
+   `https://<your server>/webhooks/telnyx`. The server must be reachable from
+   the internet over HTTPS. Webhooks not signed with the public key get 401.
+4. Telnyx answers `HELP`, `STOP`, and `START` itself, from the messaging
+   profile's autoresponses, so the server doesn't reply to them. Set the `HELP`
+   autoresponse to the server's help message, with your `SUPPORT_EMAIL`:
+
+   ```
+   (1/1) RidgeCast
+   Help: support@example.com. Reply STOP to opt out.
+   ```
+
+   Keep it in step with the help message in
+   [the reply format](docs/sms-reply-format.md) if that changes.
+
+A `STOP` deletes all of the user's trackers. Telnyx's opt-outs cover every
+number on the messaging profile, so a user who replies `STOP` to one number is
+opted out of all of them until they reply `START`.
+
 ## Development
 
 ```bash
@@ -101,9 +132,10 @@ clone:
 git config core.hooksPath .githooks
 ```
 
-SMS providers are adapters in `src/sms_providers/`, and the rest of the server
-only sees the `messaging` interface, so adding a provider means adding one file
-there.
+SMS providers are adapters in `src/sms_providers/` (`local.rs` and
+`telnyx.rs`), and the rest of the server only sees the `messaging` interface,
+so adding a provider means adding its file there and one line in
+`src/sms_providers/mod.rs`.
 
 ## Safety
 

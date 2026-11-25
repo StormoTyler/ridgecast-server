@@ -3,9 +3,8 @@
 **Status: draft.** `src/sms/reply.rs` implements every message here: replies
 to requests, errors, the help and opt-in messages, daily forecasts, tracker
 notifications, and `Tracking ended`, which the hourly tracker check sends.
-Messages are sent only through the `local` SMS provider, which prints them
-(replies through its development route, `POST /dev/sms`), until a real provider
-is added.
+Messages are sent through the configured SMS provider: `local`, which prints
+them (replies through its development route, `POST /dev/sms`), or Telnyx.
 
 This document defines the text messages that the RidgeCast server sends to
 users: replies to requests (see [sms-format.md](sms-format.md)), scheduled
@@ -157,7 +156,8 @@ was never sent never holds up the next day's.
 ### STOP
 
 Replying `STOP` ends every tracker for that number. The server deletes the
-trackers rather than pausing them, and sends no `Tracking ended` message,
+trackers when the provider reports the `STOP`, or when a message to the number
+is refused because it opted out. It deletes them rather than pausing them, and sends no `Tracking ended` message,
 since nothing more can be sent to a number that opted out. Opting in again
 (`START`) does not bring them back: the user sends a new request to track a
 location again.
@@ -597,6 +597,10 @@ address is the server's `SUPPORT_EMAIL`, shown here as support@ridgecast.app:
 (1/1) RidgeCast
 Help: support@ridgecast.app. Reply STOP to opt out.
 ```
+
+With Telnyx, a text that is exactly `HELP` is answered by Telnyx instead, from
+the messaging profile's `HELP` autoresponse, which must be set to this message
+by hand. The server still answers any other text that isn't a request.
 
 A number the server hasn't sent the opt-in message to gets it as its own
 message before the reply to its first request, so what the service sends, how
